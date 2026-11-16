@@ -2,6 +2,7 @@ package com.rahul.lilly
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -83,6 +84,17 @@ class MainActivity : Activity(), LillyBus.Ui {
             topMargin = dp(24); rightMargin = dp(8)
         })
 
+        val settings = TextView(this).apply {
+            text = "⚙ Settings"
+            setTextColor(Color.parseColor("#C9B6FF"))
+            textSize = 14f
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener { showSettings() }
+        }
+        root.addView(settings, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+            topMargin = dp(24); leftMargin = dp(8)
+        })
+
         heard = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 22f
@@ -112,6 +124,65 @@ class MainActivity : Activity(), LillyBus.Ui {
     override fun onLevel(level: Float) { orb.level = level }
     override fun onRunning(running: Boolean) = runOnUiThread {
         toggle.text = if (running) "● ON — band karein" else "○ OFF — chalu karein"
+    }
+
+    // ---------------- Settings ----------------
+
+    private val lockModes = listOf("off", "fav", "all")
+    private fun lockLabel(m: String) = when (m) {
+        "off" -> "Band (sabse safe)"
+        "all" -> "Sab contacts (kam safe)"
+        else -> "Sirf favourite ⭐ contacts"
+    }
+
+    private fun showSettings() {
+        val mode = prefs.getString("lock_mode", "fav") ?: "fav"
+        val items = arrayOf(
+            "🔒 Lock screen par call: ${lockLabel(mode)}",
+            "🎙 Agli awaaz try karo",
+            "▶ Abhi wali awaaz suno",
+            "⬇ Zyada natural Hindi awaaz download karo"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Lilly Settings")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> chooseLockMode()
+                    1 -> sendToEngine(LillyService.ACTION_NEXT_VOICE)
+                    2 -> sendToEngine(LillyService.ACTION_TEST_VOICE)
+                    3 -> openTtsSettings()
+                }
+            }
+            .setNegativeButton("Band karo", null)
+            .show()
+    }
+
+    private fun chooseLockMode() {
+        val cur = lockModes.indexOf(prefs.getString("lock_mode", "fav") ?: "fav")
+        AlertDialog.Builder(this)
+            .setTitle("Phone lock ho tab Lilly kisko call kar sake?")
+            .setSingleChoiceItems(lockModes.map { lockLabel(it) }.toTypedArray(), cur) { d, which ->
+                prefs.edit().putString("lock_mode", lockModes[which]).apply()
+                d.dismiss()
+            }
+            .show()
+    }
+
+    private fun sendToEngine(action: String) {
+        if (!hasMic()) { askPermissions(); return }
+        prefs.edit().putBoolean("enabled", true).apply()
+        try { LillyService.start(this, action) } catch (e: Exception) { }
+    }
+
+    private fun openTtsSettings() {
+        val tries = listOf(
+            Intent("com.android.settings.TTS_SETTINGS"),
+            Intent("android.speech.tts.engine.INSTALL_TTS_DATA"),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (i in tries) {
+            try { startActivity(i); return } catch (e: Exception) { }
+        }
     }
 
     // ---------------- Lifecycle ----------------

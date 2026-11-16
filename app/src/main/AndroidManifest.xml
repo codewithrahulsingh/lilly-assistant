@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
@@ -26,6 +27,7 @@
         android:label="Lilly"
         android:icon="@drawable/ic_launcher"
         android:roundIcon="@drawable/ic_launcher"
+        android:allowBackup="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name=".MainActivity"
@@ -42,5 +44,13 @@
             android:name=".LillyService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -26,6 +26,9 @@ class LillyBrain(private val ctx: Context) {
     private data class Contact(val name: String, val number: String)
 
     private val ic = setOf(RegexOption.IGNORE_CASE)
+    private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
+
+    private fun <T> pick(vararg options: T): T = options.random()
 
     // ---------- Wake word ----------
 
@@ -57,11 +60,19 @@ class LillyBrain(private val ctx: Context) {
         appTarget(t)?.let { return openApp(it) }
 
         if (Regex("""kaisi ho|kaise ho|how are you|कैसी हो|कैसे हो""", ic).containsMatchIn(t))
-            return Reply("Main badhiya hoon, aap batao", "मैं बढ़िया हूँ, आप बताओ")
+            return pick(
+                Reply("Main badhiya hoon, aap batao", "मैं बढ़िया हूँ, आप बताओ"),
+                Reply("Ekdum mast! Aap kaise ho?", "एकदम मस्त! आप कैसे हो?"),
+                Reply("Achhi hoon, bolo kya karna hai", "अच्छी हूँ, बोलो क्या करना है")
+            )
         if (Regex("""kaun ho|your name|tumhara naam|कौन हो|नाम क्या""", ic).containsMatchIn(t))
             return Reply("Main Lilly hoon, aapki assistant", "मैं लिली हूँ, आपकी असिस्टेंट")
         if (Regex("""thank|shukriya|dhanyavad|धन्यवाद|शुक्रिया|थैंक""", ic).containsMatchIn(t))
-            return Reply("Koi baat nahi 😊", "कोई बात नहीं")
+            return pick(
+                Reply("Koi baat nahi 😊", "कोई बात नहीं"),
+                Reply("Aapka swagat hai", "आपका स्वागत है"),
+                Reply("Hamesha haazir hoon", "हमेशा हाज़िर हूँ")
+            )
         if (Regex("""\b(bye|ruk jao|band karo|so jao|chup)\b|बाय|रुक जाओ|चुप""", ic).containsMatchIn(t))
             return Reply("Theek hai, zaroorat ho toh 'Lilly' bolna", "ठीक है, ज़रूरत हो तो लिली बोलना")
 
@@ -96,8 +107,23 @@ class LillyBrain(private val ctx: Context) {
         ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun callReply(target: String): Reply {
+        // ---- Lock screen security ----
+        val locked = isLocked()
+        val lockMode = prefs.getString("lock_mode", "fav") ?: "fav"
+        if (locked && lockMode == "off") {
+            return Reply(
+                "Security ke liye lock screen par call band hai. Pehle phone unlock kijiye",
+                "सुरक्षा के लिए लॉक स्क्रीन पर कॉल बंद है, पहले फ़ोन अनलॉक कीजिए"
+            )
+        }
+        val favOnly = locked && lockMode == "fav"
+
         val digits = target.filter { it.isDigit() || it == '+' }
         if (digits.count { it.isDigit() } >= 5 && target.count { it.isLetter() } == 0) {
+            if (favOnly) return Reply(
+                "Lock screen par number bol kar call nahi hoti. Phone unlock kijiye",
+                "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए"
+            )
             return Reply("$digits par call kar rahi hoon", "$digits पर कॉल कर रही हूँ") { startCall(digits) }
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
@@ -105,8 +131,11 @@ class LillyBrain(private val ctx: Context) {
                 openAppSettings()
             }
         }
-        val c = findContact(target)
-            ?: return Reply("\"$target\" naam ka contact nahi mila", "$target नाम का कॉन्टैक्ट नहीं मिला")
+        val c = findContact(target, favOnly)
+            ?: return if (favOnly) Reply(
+                "Lock screen par sirf favourite (⭐) contacts ko call hoti hai. \"$target\" favourite me nahi mila",
+                "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला"
+            ) else Reply("\"$target\" naam ka contact nahi mila", "$target नाम का कॉन्टैक्ट नहीं मिला")
         return Reply("${c.name} ko call kar rahi hoon", "${c.name} को कॉल कर रही हूँ") { startCall(c.number) }
     }
 
@@ -132,13 +161,14 @@ class LillyBrain(private val ctx: Context) {
         try { ctx.startActivity(intent) } catch (e: Exception) { }
     }
 
-    private fun findContact(query: String): Contact? {
+    private fun findContact(query: String, favOnly: Boolean): Contact? {
         val q = normName(query)
         if (q.isBlank()) return null
         val all = mutableListOf<Contact>()
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
+            ContactsContract.CommonDataKinds.Phone.NUMBER,
+            ContactsContract.CommonDataKinds.Phone.STARRED
         )
         try {
             ctx.contentResolver.query(
@@ -147,6 +177,7 @@ class LillyBrain(private val ctx: Context) {
                 while (cur.moveToNext()) {
                     val n = cur.getString(0) ?: continue
                     val num = cur.getString(1) ?: continue
+                    if (favOnly && cur.getInt(2) != 1) continue
                     all.add(Contact(n, num))
                 }
             }

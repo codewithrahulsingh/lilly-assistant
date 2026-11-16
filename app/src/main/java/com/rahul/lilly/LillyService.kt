@@ -22,6 +22,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import java.util.Locale
 
 /**
@@ -33,6 +34,30 @@ class LillyService : Service() {
     companion object {
         const val ACTION_STOP = "com.rahul.lilly.STOP"
         const val ACTION_ACTIVATE = "com.rahul.lilly.ACTIVATE"
+        const val ACTION_NEXT_VOICE = "com.rahul.lilly.NEXT_VOICE"
+        const val ACTION_TEST_VOICE = "com.rahul.lilly.TEST_VOICE"
+        private const val START_CHANNEL = "lilly_start"
+        private const val START_NOTIF_ID = 8
+
+        /** Jab Lilly background se khud shuru na ho paaye (jaise phone restart), tab tap karke chalu karne wala notification */
+        fun notifyTapToStart(ctx: Context) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(START_CHANNEL, "Lilly shuru karein", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+            val open = PendingIntent.getActivity(
+                ctx, 3, Intent(ctx, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(ctx, START_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_lilly)
+                .setContentTitle("Lilly so rahi hai")
+                .setContentText("Tap karein, Lilly phir se sunna shuru kar degi")
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            try { nm.notify(START_NOTIF_ID, n) } catch (e: Exception) { }
+        }
         private const val CHANNEL = "lilly_listening"
         private const val NOTIF_ID = 7
 
@@ -56,6 +81,23 @@ class LillyService : Service() {
     private var afterSpeak: (() -> Unit)? = null
     private var started = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var lastEvent = 0L
+    private var voiceList: List<Voice> = emptyList()
+    private val prefs by lazy { getSharedPreferences("lilly", Context.MODE_PRIVATE) }
+
+    /** Recognizer kabhi-kabhi atak jaata hai — har 10 sec dekho, 20 sec se chup ho toh naya bana do */
+    private val watchdog: Runnable = Runnable {
+        if (mode == Mode.WAKE && System.currentTimeMillis() - lastEvent > 20_000) {
+            try { recognizer?.destroy() } catch (e: Exception) { }
+            recognizer = null
+            listen(Mode.WAKE)
+        }
+        scheduleWatchdog()
+    }
+    private fun scheduleWatchdog() {
+        if (mode != Mode.STOPPED) handler.postDelayed(watchdogRef(), 10_000)
+    }
+    private fun watchdogRef(): Runnable = watchdog
     private val handler = Handler(Looper.getMainLooper())
     private val wakeRunnable: Runnable = Runnable {
         if (mode == Mode.SPEAKING || mode == Mode.STOPPED) return@Runnable
@@ -77,6 +119,7 @@ class LillyService : Service() {
             return START_NOT_STICKY
         }
         if (!goForeground()) {
+            notifyTapToStart(this)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -90,9 +133,15 @@ class LillyService : Service() {
                 acquire()
             }
             LillyBus.running = true
+            getSystemService(NotificationManager::class.java).cancel(START_NOTIF_ID)
             listen(Mode.WAKE)
+            scheduleWatchdog()
         }
-        if (intent?.action == ACTION_ACTIVATE) activate()
+        when (intent?.action) {
+            ACTION_ACTIVATE -> activate()
+            ACTION_NEXT_VOICE -> nextVoice()
+            ACTION_TEST_VOICE -> testVoice()
+        }
         return START_STICKY
     }
 
@@ -139,24 +188,82 @@ class LillyService : Service() {
 
     // ---------------- Voice (TTS) ----------------
 
+    /**
+     * Sabse natural Hindi female awaaz chuno. Google ki "network" (neural) awaazein
+     * offline wali se kaafi zyada insaan jaisi lagti hain, isliye unhe pehle rakha hai.
+     */
+    private fun rankVoices(t: TextToSpeech): List<Voice> {
+        val all = try { t.voices?.toList() ?: emptyList() } catch (e: Exception) { emptyList() }
+        val hindi = all.filter { it.locale.language == "hi" && !it.features.contains("notInstalled") }
+        fun score(v: Voice): Int {
+            var sc = v.quality
+            if (v.isNetworkConnectionRequired) sc += 150
+            val n = v.name.lowercase(Locale.ROOT)
+            if ("female" in n) sc += 100
+            if ("-hia-" in n || n.endsWith("-hia") || "-hic-" in n || n.endsWith("-hic")) sc += 80
+            if ("male" in n && "female" !in n) sc -= 100
+            if ("-hid" in n || "-hie" in n) sc -= 60
+            return sc
+        }
+        return hindi.sortedByDescending { score(it) }
+    }
+
+    private fun applyVoice(t: TextToSpeech, v: Voice?) {
+        if (v != null) t.voice = v else t.language = Locale("hi", "IN")
+        // Neural awaaz ko normal pitch par rakho, warna robotic lagti hai
+        val neural = v?.isNetworkConnectionRequired == true || (v?.quality ?: 0) >= Voice.QUALITY_HIGH
+        t.setPitch(if (neural) 1.0f else 1.08f)
+        t.setSpeechRate(if (neural) 1.0f else 0.95f)
+    }
+
     private fun setupVoice() {
         val t = tts ?: return
-        val voices = try { t.voices?.toList() ?: emptyList() } catch (e: Exception) { emptyList() }
-        val hindi = voices.filter { it.locale.language == "hi" }
-        val offline = hindi.filter { !it.isNetworkConnectionRequired }.ifEmpty { hindi }
-        val female = offline.firstOrNull { it.name.contains("female", ignoreCase = true) }
-            ?: offline.firstOrNull { it.name.contains("hia") || it.name.contains("hic") }
-            ?: offline.firstOrNull()
-        if (female != null) t.voice = female else t.language = Locale("hi", "IN")
-        t.setPitch(1.15f)
-        t.setSpeechRate(1.0f)
+        voiceList = rankVoices(t)
+        val saved = prefs.getString("voice", null)
+        val chosen = voiceList.firstOrNull { it.name == saved } ?: voiceList.firstOrNull()
+        applyVoice(t, chosen)
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) = finishSpeaking()
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) = finishSpeaking()
+            override fun onError(id: String?, errorCode: Int) {
+                // Network awaaz fail ho (internet nahi) toh offline awaaz par aa jao
+                if (tts?.voice?.isNetworkConnectionRequired == true) {
+                    handler.post {
+                        val offline = voiceList.firstOrNull { !it.isNetworkConnectionRequired }
+                        tts?.let { applyVoice(it, offline) }
+                    }
+                }
+                finishSpeaking()
+            }
         })
         ttsReady = true
+    }
+
+    private fun voiceLabel(): String {
+        val v = tts?.voice ?: return "default"
+        val idx = voiceList.indexOfFirst { it.name == v.name } + 1
+        val kind = if (v.isNetworkConnectionRequired) "natural (online)" else "offline"
+        return "Awaaz $idx/${voiceList.size} — $kind"
+    }
+
+    private fun nextVoice() {
+        val t = tts ?: return
+        if (voiceList.isEmpty()) {
+            say("Phone me Hindi awaaz nahi mili. Settings me Google voice data download kijiye", "हिंदी आवाज़ नहीं मिली")
+            return
+        }
+        val cur = voiceList.indexOfFirst { it.name == t.voice?.name }
+        val next = voiceList[(cur + 1) % voiceList.size]
+        prefs.edit().putString("voice", next.name).apply()
+        applyVoice(t, next)
+        testVoice()
+    }
+
+    private fun testVoice() {
+        val back = mode == Mode.WAKE || mode == Mode.STOPPED
+        say(voiceLabel(), "नमस्ते, मैं लिली हूँ। ये आवाज़ कैसी लगी?") { if (back) listen(Mode.WAKE) }
     }
 
     private fun finishSpeaking() {
@@ -217,6 +324,7 @@ class LillyService : Service() {
             LillyBus.orb(OrbView.State.IDLE)
             LillyBus.status("\"Lilly\" boliye ya orb dabaiye")
         }
+        lastEvent = System.currentTimeMillis()
         try {
             r.cancel()
             r.startListening(recognizerIntent(newMode == Mode.COMMAND))
@@ -242,6 +350,7 @@ class LillyService : Service() {
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
+            lastEvent = System.currentTimeMillis()
             when (mode) {
                 Mode.COMMAND ->
                     if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
@@ -258,6 +367,7 @@ class LillyService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            lastEvent = System.currentTimeMillis()
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
             handleResults(list)
         }
@@ -289,7 +399,13 @@ class LillyService : Service() {
     private fun activate() {
         if (mode == Mode.SPEAKING || mode == Mode.COMMAND) return
         LillyBus.heard("")
-        say("Haan bolo", "हाँ बोलो") { listen(Mode.COMMAND) }
+        val greet = listOf(
+            "Haan bolo" to "हाँ, बोलो",
+            "Ji, boliye" to "जी, बोलिए",
+            "Haan, bataiye" to "हाँ, बताइए",
+            "Main sun rahi hoon" to "मैं सुन रही हूँ"
+        ).random()
+        say(greet.first, greet.second) { listen(Mode.COMMAND) }
     }
 
     private fun runCommand(text: String, alternatives: List<String>) {

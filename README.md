@@ -30,3 +30,14 @@ Phone restart hone ke baad Lilly app ek baar kholna padta hai (Android ka niyam)
 
 ## Note
 - Speech recognition ke liye phone me Google app hona chahiye.
+
+## Settings (⚙ upar baayein kone me)
+- **Lock screen par call:** Band / Sirf favourite ⭐ contacts (default) / Sab contacts
+- **Awaaz:** "Agli awaaz try karo" se phone ki saari Hindi awaazein sun kar pasand ki chuno.
+  Sabse natural awaaz ke liye *Speech Services by Google* update karein aur Hindi voice data download karein.
+
+## Security
+- Internet permission nahi — Lilly khud kuch online nahi bhejti
+- Koi restricted permission (overlay/accessibility) nahi
+- App data ka backup off
+- Lock screen par default sirf favourite contacts ko call
