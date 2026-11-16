@@ -169,9 +169,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     /**
-     * Ek-ek karke do zaroori settings:
-     * 1) Battery optimization se chhoot — taaki phone Lilly ko background me band na kare
-     * 2) "Display over other apps" — taaki lock/home screen se bhi apps khul sakein
+     * Battery optimization se chhoot — taaki phone Lilly ko background me band na kare.
+     * (Security ke liye "Display over other apps" jaisi restricted permission nahi maangi jaati.)
      */
     private fun askSpecialPermissions() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -180,15 +179,6 @@ class MainActivity : Activity(), LillyBus.Ui {
             try {
                 startActivity(
                     Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-                )
-                return
-            } catch (e: Exception) { }
-        }
-        if (!Settings.canDrawOverlays(this) && !prefs.getBoolean("asked_overlay", false)) {
-            prefs.edit().putBoolean("asked_overlay", true).apply()
-            try {
-                startActivity(
-                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
                 )
             } catch (e: Exception) { }
         }

@@ -344,6 +344,8 @@ class LillyBrain(private val ctx: Context) {
 
         if (isLocked())
             return Reply("Apps kholne ke liye pehle phone unlock kijiye", "ऐप खोलने के लिए पहले फ़ोन अनलॉक कीजिए")
+        if (LillyBus.ui == null)
+            return Reply("Apps kholne ke liye Lilly app khol kar boliye", "ऐप खोलने के लिए लिली ऐप खोलकर बोलिए")
         return Reply("$display khol rahi hoon", "$display खोल रही हूँ") { launch(intent) }
     }
 

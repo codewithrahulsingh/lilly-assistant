@@ -22,7 +22,9 @@ Notification se "Baat karo" ya "Band karo" bhi kar sakte hain.
 Pehli baar app kholne par ye allow karein:
 - Mic, Contacts, Phone, Notifications
 - Battery optimization: **Allow** (warna phone Lilly ko band kar deta hai)
-- Display over other apps: **ON** (background se apps kholne ke liye)
+
+Security ke liye Lilly koi restricted permission (Display over other apps) ya Internet permission nahi leti.
+Isliye apps (YouTube wagairah) sirf tab khulte hain jab Lilly app screen par khula ho; call aur torch lock screen se bhi chalte hain.
 
 Phone restart hone ke baad Lilly app ek baar kholna padta hai (Android ka niyam).
 
