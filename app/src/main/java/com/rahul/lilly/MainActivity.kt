@@ -35,6 +35,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var langValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
+    private var setupShown = false
     private val myLauncher: (Intent) -> Boolean = { i ->
         try { startActivity(i); true } catch (e: Exception) { false }
     }
@@ -148,7 +149,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         col.addView(heard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        col.addView(label("Boliye “Hey Lilly” ya orb dabaiye", 13f, dim).apply {
+        col.addView(label("Boliye “Lilly” ya “Hey Lilly”", 13f, dim).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(2), 0, dp(18))
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -180,6 +181,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r5 = row(col)
         langValue = card(r5, "🗣", "Sunne ki bhasha") { chooseLanguage() }
+        card(r5, "🔕", "Notification chhupao") { hideNotification() }.text = "Tap karke OFF karein"
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -235,6 +237,28 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun hideNotification() {
+        AlertDialog.Builder(this)
+            .setTitle("Notification chhupana")
+            .setMessage(
+                "Agli screen par switch OFF kar dijiye. Notification gayab ho jaayega aur " +
+                    "Lilly background me chalti rahegi.\n\n" +
+                    "(Android khud ye notification hatane nahi deta, isliye ye aapko ek baar OFF karna hoga.)"
+            )
+            .setPositiveButton("Kholo") { _, _ ->
+                val ok = Build.VERSION.SDK_INT >= 26 && tryStart(
+                    Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        .putExtra(Settings.EXTRA_CHANNEL_ID, LillyService.CHANNEL)
+                )
+                if (!ok) tryStart(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                )
+            }
+            .setNegativeButton("Rehne do", null)
+            .show()
+    }
+
     private fun langLabel(l: String) =
         if (l == "en") "English (Indian)" else "Hindi + English (Hinglish)"
 
@@ -262,8 +286,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         AlertDialog.Builder(this)
             .setTitle("Har screen par Siri jaisa orb")
             .setMessage(
-                "Kisi bhi app ke upar neeche Siri jaisa orb dikhane aur apps seedha kholne ke liye " +
-                    "\"Display over other apps\" ON karna zaroori hai.\n\n" +
+                "Ye ON kiye bina orb apne aap nahi khulta, sirf notification aata hai.\n\n" +
+                    "ON karne par \"Lilly\" bolte hi lock screen aur home screen dono par " +
+                    "neeche Siri jaisa orb khud aa jaayega.\n\n" +
                     "Agar \"App was denied access\" aaye:\n" +
                     "1. \"App info\" dabaiye\n" +
                     "2. Upar ⋮ (3 dots) → \"Allow restricted settings\"\n" +
@@ -292,7 +317,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun showHelp() {
         AlertDialog.Builder(this)
-            .setTitle("Pehle boliye \"Hey Lilly\", phir:")
+            .setTitle("Pehle boliye \"Lilly\" ya \"Hey Lilly\", phir:")
             .setItems(
                 arrayOf(
                     "📞  \"Rahul ko call karo\"",
@@ -350,7 +375,14 @@ class MainActivity : Activity(), LillyBus.Ui {
         onRunning(LillyBus.running)
         refreshCards()
         if (hasMic() && prefs.getBoolean("enabled", true) && !LillyBus.running) startEngine()
-        if (missingPermissions().isEmpty()) askSpecialPermissions()
+        if (missingPermissions().isEmpty()) {
+            askSpecialPermissions()
+            // Sabse zaroori setup: iske bina orb apne aap nahi khulta
+            if (!setupShown && !Settings.canDrawOverlays(this)) {
+                setupShown = true
+                appsAnywhere()
+            }
+        }
     }
 
     override fun onPause() {

@@ -93,7 +93,7 @@ class LillyService : Service() {
                 .build()
             try { nm.notify(START_NOTIF_ID, n) } catch (e: Exception) { }
         }
-        private const val CHANNEL = "lilly_listening"
+        const val CHANNEL = "lilly_bg"
         private const val NOTIF_ID = 7
 
         fun start(ctx: Context, action: String? = null) {
@@ -194,11 +194,14 @@ class LillyService : Service() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Lilly sun rahi hai", NotificationManager.IMPORTANCE_LOW).apply {
+            NotificationChannel(
+                CHANNEL, "Background me chalna (ise OFF kar sakte hain)", NotificationManager.IMPORTANCE_LOW
+            ).apply {
                 setShowBadge(false)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
         )
+        try { nm.deleteNotificationChannel("lilly_listening") } catch (e: Exception) { }
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), flags)
         val stop = PendingIntent.getService(
@@ -209,18 +212,13 @@ class LillyService : Service() {
         )
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_lilly)
-            .setLargeIcon(orbBitmap())
-            .setContentTitle("Lilly active hai ✨")
-            .setContentText("Boliye \"Hey Lilly\" — main sun rahi hoon")
-            .setSubText("Assistant")
-            .setColor(0xFF7B2FF7.toInt())
-            .setColorized(true)
+            .setContentTitle("Lilly sun rahi hai")
             .setContentIntent(open)
             .setOngoing(true)
             .setShowWhen(false)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(Notification.Action.Builder(null, "🎙 Baat karo", talk).build())
-            .addAction(Notification.Action.Builder(null, "⏻ Band karo", stop).build())
+            .setVisibility(Notification.VISIBILITY_SECRET)
+            .addAction(Notification.Action.Builder(null, "Baat karo", talk).build())
+            .addAction(Notification.Action.Builder(null, "Band karo", stop).build())
             .build()
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -433,7 +431,9 @@ class LillyService : Service() {
     private fun isWakeText(json: String?, key: String): Boolean {
         if (json.isNullOrBlank()) return false
         val text = try { JSONObject(json).optString(key) } catch (e: Exception) { "" }
-        return Regex("""\b(hey|hi|hello)\s+lil+y\b""").containsMatchIn(text)
+        // Bolte-bolte (partial) sirf "hey lily" par jaago; vakya poora hone par akela "lily" bhi chalega
+        val re = if (key == "partial") Regex("""\b(hey|hi|hello)\s+lil+y\b""") else Regex("""\blil+y\b""")
+        return re.containsMatchIn(text)
     }
 
     private val voskListener = object : org.vosk.android.RecognitionListener {
@@ -466,7 +466,7 @@ class LillyService : Service() {
             try { recognizer?.cancel() } catch (e: Exception) { }
             mode = Mode.WAKE
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Hey Lilly\" boliye")
+            LillyBus.status("\"Lilly\" ya \"Hey Lilly\" boliye")
             lastEvent = System.currentTimeMillis()
             if (!startVosk()) restartLater(1500)
             return
@@ -480,7 +480,7 @@ class LillyService : Service() {
             LillyBus.status("Sun rahi hoon…")
         } else {
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Hey Lilly\" boliye")
+            LillyBus.status("\"Lilly\" ya \"Hey Lilly\" boliye")
         }
         lastEvent = System.currentTimeMillis()
         try {
@@ -579,9 +579,21 @@ class LillyService : Service() {
 
     private fun showOverlay() {
         if (LillyBus.ui != null) return // Lilly ki screen pehle se khuli hai
-        if (Build.VERSION.SDK_INT >= 26 && !brain.isLocked() && Settings.canDrawOverlays(this)) {
-            val f = floating ?: FloatingOrb(this).also { floating = it }
-            if (f.show()) return
+        if (Settings.canDrawOverlays(this)) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (brain.isLocked() || !pm.isInteractive) {
+                // Lock screen / screen band: popup seedha khulta hai aur screen jagata hai
+                try {
+                    startActivity(
+                        Intent(this, OverlayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    return
+                } catch (e: Exception) { }
+            } else if (Build.VERSION.SDK_INT >= 26) {
+                // Home screen / koi bhi app: neeche se orb
+                val f = floating ?: FloatingOrb(this).also { floating = it }
+                if (f.show()) return
+            }
         }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
