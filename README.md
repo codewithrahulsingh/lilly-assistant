@@ -4,7 +4,7 @@
 (lock screen par bhi) → command bolo. "Lilly" pehchanne ka kaam ab poori tarah **phone ke andar (offline)**
 hota hai, isliye baar-baar beep nahi, battery kam, aur aapki awaaz bahar nahi jaati jab tak "Lilly" na bolo.
 
-"Hey Lilly" boliye → Lilly "Haan baby, bolo kya karu?" kehti hai → apna kaam boliye.
+"Hey Lilly" boliye → Lilly "Haan Rahul, bolo kya karu?" kehti hai → apna kaam boliye.
 
 ## Lilly abhi kya kar sakti hai
 - **Call:** "Rahul ko call karo", "call Mummy", "9876543210 ko call karo"

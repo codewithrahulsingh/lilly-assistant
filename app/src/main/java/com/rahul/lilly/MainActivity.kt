@@ -32,6 +32,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var lockValue: TextView
     private lateinit var appsValue: TextView
     private lateinit var batteryValue: TextView
+    private lateinit var langValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private val myLauncher: (Intent) -> Boolean = { i ->
@@ -170,12 +171,15 @@ class MainActivity : Activity(), LillyBus.Ui {
             .text = "Hindi voice download"
 
         val r3 = row(col)
-        appsValue = card(r3, "📱", "Kahin se bhi apps kholna") { appsAnywhere() }
+        appsValue = card(r3, "📱", "Har screen par orb + apps") { appsAnywhere() }
         batteryValue = card(r3, "🔋", "Background me chalna") { batterySettings() }
 
         val r4 = row(col)
         card(r4, "💡", "Kya bol sakte ho") { showHelp() }.text = "Commands dekho"
         card(r4, "🛡", "Security") { showSecurity() }.text = "Lilly kitni safe hai"
+
+        val r5 = row(col)
+        langValue = card(r5, "🗣", "Sunne ki bhasha") { chooseLanguage() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -190,6 +194,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun refreshCards() {
+        langValue.text = langLabel(prefs.getString("lang", "hi") ?: "hi")
         lockValue.text = lockLabel(prefs.getString("lock_mode", "fav") ?: "fav")
         appsValue.text = if (Settings.canDrawOverlays(this)) "ON ✓" else "OFF — tap karke ON karein"
         val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -230,18 +235,35 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun langLabel(l: String) =
+        if (l == "en") "English (Indian)" else "Hindi + English (Hinglish)"
+
+    private fun chooseLanguage() {
+        val codes = listOf("hi", "en")
+        val cur = codes.indexOf(prefs.getString("lang", "hi") ?: "hi")
+        AlertDialog.Builder(this)
+            .setTitle("Lilly aapki baat kis bhasha me sune?")
+            .setSingleChoiceItems(codes.map { langLabel(it) }.toTypedArray(), cur) { d, which ->
+                prefs.edit().putString("lang", codes[which]).apply()
+                refreshCards()
+                d.dismiss()
+            }
+            .show()
+    }
+
     private fun appsAnywhere() {
         if (Settings.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
                 .setTitle("ON hai ✓")
-                .setMessage("Ab kisi bhi screen se \"Hey Lilly, YouTube kholo\" bolne par app seedha khulega.")
+                .setMessage("Ab \"Hey Lilly\" bolne par kisi bhi app ke upar neeche Siri jaisa orb aayega, aur apps seedha khulenge.")
                 .setPositiveButton("OK", null).show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Kahin se bhi apps kholna")
+            .setTitle("Har screen par Siri jaisa orb")
             .setMessage(
-                "Android background se app kholne nahi deta jab tak \"Display over other apps\" ON na ho.\n\n" +
+                "Kisi bhi app ke upar neeche Siri jaisa orb dikhane aur apps seedha kholne ke liye " +
+                    "\"Display over other apps\" ON karna zaroori hai.\n\n" +
                     "Agar \"App was denied access\" aaye:\n" +
                     "1. \"App info\" dabaiye\n" +
                     "2. Upar ⋮ (3 dots) → \"Allow restricted settings\"\n" +

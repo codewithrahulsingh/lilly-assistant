@@ -85,7 +85,7 @@ class LillyBrain(private val ctx: Context) {
     // ---------- Call ----------
 
     private val callWords = "call|phone|fone|fon|dial|कॉल|काल|फोन|फ़ोन"
-    private val doWords = "karo|kar do|kardo|lagao|laga do|kijiye|karna|please|करो|कर दो|लगाओ|लगा दो"
+    private val doWords = "karo|kar do|kardo|lagao|laga do|kijiye|karna|milao|please|करो|कर दो|लगाओ|लगा दो|कीजिए|करना|मिलाओ|करें"
     private val callPatterns = listOf(
         Regex("""^(.+?)\s+(?:ko|को|se|से)\s+(?:$callWords)(?:\s+.*)?$""", ic),
         Regex("""^(?:please\s+)?(?:$callWords)\s+(?:karo\s+|to\s+)?(.+?)(?:\s+(?:ko|को))?(?:\s+(?:$doWords))?$""", ic),
@@ -222,6 +222,8 @@ class LillyBrain(private val ctx: Context) {
     private fun skeleton(s: String) =
         s.replace(Regex("[aeiouyh]"), "").replace(Regex("(.)\\1+"), "$1")
 
+    private fun appSkeleton(s: String) = skeleton(s.replace('w', 'v').replace("ph", "f"))
+
     private fun levenshtein(a: String, b: String): Int {
         val dp = IntArray(b.length + 1) { it }
         for (i in 1..a.length) {
@@ -332,7 +334,7 @@ class LillyBrain(private val ctx: Context) {
 
     private val openPatterns = listOf(
         Regex("""^(?:open|start|launch)\s+(.+)$""", ic),
-        Regex("""^(.+?)\s+(?:kholo|khol do|kholdo|open karo|open kar do|open|chalao|chala do|start karo|खोलो|खोल दो|चलाओ|ओपन करो)$""", ic)
+        Regex("""^(.+?)\s+(?:kholo|khol do|kholdo|open karo|open kar do|open|chalao|chala do|start karo|खोलो|खोल दो|खोलिए|खोलें|चलाओ|चला दो|ओपन करो|ओपन कर दो|open करो|open कर दो|ओपन)$""", ic)
     )
     private val appAliases = mapOf(
         "यूट्यूब" to "youtube", "you tube" to "youtube",
@@ -368,12 +370,16 @@ class LillyBrain(private val ctx: Context) {
         val intent = special ?: run {
             val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
             val apps = pm.queryIntentActivities(launcher, 0)
-            val target = name.lowercase(Locale.ROOT).replace(" ", "")
-            val match = apps.firstOrNull {
-                it.loadLabel(pm).toString().lowercase(Locale.ROOT).replace(" ", "") == target
-            } ?: apps.firstOrNull {
-                it.loadLabel(pm).toString().lowercase(Locale.ROOT).replace(" ", "").contains(target)
-            }
+            // Hindi me suna gaya naam ("इंस्टाग्राम") bhi Roman label ("Instagram") se milao
+            val target = normName(name).replace(" ", "")
+            val labels = apps.map { it to normName(it.loadLabel(pm).toString()).replace(" ", "") }
+            val sk = appSkeleton(target)
+            val match = if (target.isBlank()) null else (
+                labels.firstOrNull { it.second == target }
+                    ?: labels.firstOrNull { it.second.startsWith(target) }
+                    ?: labels.firstOrNull { it.second.contains(target) }
+                    ?: (if (sk.length >= 3) labels.firstOrNull { appSkeleton(it.second) == sk } else null)
+                )?.first
             match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
         } ?: return Reply("\"$display\" app nahi mila", "$display ऐप नहीं मिला")
 

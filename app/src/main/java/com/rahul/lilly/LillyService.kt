@@ -23,6 +23,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -120,6 +121,8 @@ class LillyService : Service() {
     private var voskService: SpeechService? = null
     private var voskRec: Recognizer? = null
     private var voskLoading = false
+    private var floating: FloatingOrb? = null
+    private var retries = 0
     private var voiceList: List<Voice> = emptyList()
     private val prefs by lazy { getSharedPreferences("lilly", Context.MODE_PRIVATE) }
 
@@ -370,11 +373,16 @@ class LillyService : Service() {
 
     private fun recognizerIntent(command: Boolean) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+        val lang = if (prefs.getString("lang", "hi") == "en") "en-IN" else "hi-IN"
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-        if (command) putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        if (command) {
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
+        }
     }
 
     // ---------------- Offline wake word (Vosk) ----------------
@@ -394,7 +402,8 @@ class LillyService : Service() {
             })
     }
 
-    private val wakeGrammar = "[\"hey lily\", \"hi lily\", \"hey\", \"hi\", \"lily\", \"[unk]\"]"
+    private val wakeGrammar =
+        "[\"hey lily\", \"hi lily\", \"hello lily\", \"hey\", \"hi\", \"hello\", \"lily\", \"[unk]\"]"
 
     private fun startVosk(): Boolean {
         val model = voskModel ?: return false
@@ -424,12 +433,17 @@ class LillyService : Service() {
     private fun isWakeText(json: String?, key: String): Boolean {
         if (json.isNullOrBlank()) return false
         val text = try { JSONObject(json).optString(key) } catch (e: Exception) { "" }
-        return Regex("""\b(hey|hi)\s+lil+y\b""").containsMatchIn(text)
+        return Regex("""\b(hey|hi|hello)\s+lil+y\b""").containsMatchIn(text)
     }
 
     private val voskListener = object : org.vosk.android.RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {
             lastEvent = System.currentTimeMillis()
+            // Poora vakya khatam hone ka intezaar nahi — "hey lily" sunte hi jaag jao
+            if (mode == Mode.WAKE && isWakeText(hypothesis, "partial")) {
+                stopVosk()
+                activate(fromTap = false)
+            }
         }
         override fun onResult(hypothesis: String?) {
             lastEvent = System.currentTimeMillis()
@@ -498,7 +512,12 @@ class LillyService : Service() {
             when (mode) {
                 Mode.COMMAND ->
                     if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                        say("Kuch sunai nahi diya", "कुछ सुनाई नहीं दिया") { endSession(); listen(Mode.WAKE) }
+                        if (retries < 1) {
+                            retries++
+                            listen(Mode.COMMAND)
+                        } else {
+                            say("Kuch sunai nahi diya", "कुछ सुनाई नहीं दिया") { endSession(); listen(Mode.WAKE) }
+                        }
                     } else restartLater(600)
                 Mode.WAKE -> restartLater(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1000 else 250)
                 else -> {}
@@ -549,7 +568,8 @@ class LillyService : Service() {
         stopVosk()
         LillyBus.heard("")
         if (!fromTap) showOverlay()
-        say("Haan baby, bolo kya karu?", "हाँ बेबी, बोलो क्या करूँ") { listen(Mode.COMMAND) }
+        retries = 0
+        say("Haan Rahul, bolo kya karu?", "हाँ राहुल, बोलो क्या करूँ") { listen(Mode.COMMAND) }
     }
 
     // ---------------- Siri jaisa popup (lock screen par bhi) ----------------
@@ -559,6 +579,10 @@ class LillyService : Service() {
 
     private fun showOverlay() {
         if (LillyBus.ui != null) return // Lilly ki screen pehle se khuli hai
+        if (Build.VERSION.SDK_INT >= 26 && !brain.isLocked() && Settings.canDrawOverlays(this)) {
+            val f = floating ?: FloatingOrb(this).also { floating = it }
+            if (f.show()) return
+        }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(liveChannel, "Lilly popup", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -588,6 +612,7 @@ class LillyService : Service() {
     private fun endSession() {
         getSystemService(NotificationManager::class.java).cancel(liveId)
         LillyBus.endSession()
+        floating?.hideSoon()
     }
 
     private fun runCommand(text: String, alternatives: List<String>) {
@@ -608,6 +633,7 @@ class LillyService : Service() {
         started = false
         handler.removeCallbacksAndMessages(null)
         stopVosk()
+        floating?.hide()
         tone?.release()
         tone = null
         getSystemService(NotificationManager::class.java).cancel(liveId)
