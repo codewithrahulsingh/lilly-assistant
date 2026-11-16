@@ -11,6 +11,8 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -265,6 +267,7 @@ class LillyBrain(private val ctx: Context) {
 
     private val spotify = "com.spotify.music"
     private val youtube = "com.google.android.youtube"
+    private val ytMusic = "com.google.android.apps.youtube.music"
 
     private fun installed(pkg: String) = ctx.packageManager.getLaunchIntentForPackage(pkg) != null
 
@@ -288,32 +291,57 @@ class LillyBrain(private val ctx: Context) {
         if (query.isBlank()) return mediaReply("resume")
         val shown = query.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
 
-        if (app == "youtube" && installed(youtube)) {
-            val i = Intent(Intent.ACTION_SEARCH).setPackage(youtube).putExtra("query", query)
-            return Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
-                openExternal(i, "YouTube")
-            }, endChat = true)
-        }
+        if (app == "youtube" && installed(youtube)) return youtubeReply(query, shown)
         val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
             .putExtra(SearchManager.QUERY, query)
             .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
         if (installed(spotify)) {
             i.setPackage(spotify)
+            if (!MusicControl.hasAccess(ctx)) {
+                // Spotify akela sirf search dikhata hai; gaana khud chalane ke liye ek permission chahiye
+                if (installed(youtube)) return youtubeReply(query, shown)
+                return Reply(
+                    "Spotify par $shown dhoondh rahi hoon. Gaana khud chalne ke liye Lilly app me \"Gaana auto-play\" ON kijiye",
+                    "स्पॉटिफाई पर $shown ढूँढ रही हूँ। गाना खुद चलने के लिए लिली ऐप में गाना ऑटो प्ले ऑन कीजिए",
+                    { openExternal(i, "Spotify") }, endChat = true
+                )
+            }
             return Reply("Spotify par $shown chala rahi hoon", "स्पॉटिफाई पर $shown चला रही हूँ", {
                 openExternal(i, "Spotify")
+                MusicControl.playFromSearch(ctx, spotify, query)
             }, endChat = true)
         }
+        if (installed(ytMusic)) {
+            // YouTube Music ye intent milte hi gaana chala deta hai
+            i.setPackage(ytMusic)
+            return Reply("YouTube Music par $shown chala rahi hoon", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
+                openExternal(i, "YouTube Music")
+                MusicControl.playFromSearch(ctx, ytMusic, query)
+            }, endChat = true)
+        }
+        if (installed(youtube)) return youtubeReply(query, shown)
         if (i.resolveActivity(ctx.packageManager) != null) {
             return Reply("$shown chala rahi hoon", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
         }
-        if (installed(youtube)) {
-            val y = Intent(Intent.ACTION_SEARCH).setPackage(youtube).putExtra("query", query)
-            return Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
-                openExternal(y, "YouTube")
-            }, endChat = true)
-        }
         return Reply("Gaana chalane ke liye Spotify install kijiye", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true)
     }
+
+    /** YouTube: pehla result dhoondh kar seedha wahi video chalao (sirf search par na ruke) */
+    private fun youtubeReply(query: String, shown: String): Reply =
+        Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
+            Thread {
+                val id = MusicControl.firstYouTubeVideo("$query song")
+                Handler(Looper.getMainLooper()).post {
+                    val intent = if (id != null) {
+                        Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$id")).setPackage(youtube)
+                    } else {
+                        // Internet/ID na mile toh kam se kam search khol do
+                        Intent(Intent.ACTION_SEARCH).setPackage(youtube).putExtra("query", query)
+                    }
+                    openExternal(intent, "YouTube")
+                }
+            }.start()
+        }, endChat = true)
 
     private fun volumeReply(action: String): Reply {
         val s = AudioManager.STREAM_MUSIC

@@ -61,6 +61,17 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Sirf music apps ko "ye gaana chalao" bolne ke liye; notifications padhe nahi jaate -->
+        <service
+            android:name=".MediaAccess"
+            android:exported="true"
+            android:label="Lilly gaana auto-play"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

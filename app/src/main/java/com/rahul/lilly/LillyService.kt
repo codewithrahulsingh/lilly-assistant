@@ -144,6 +144,61 @@ class LillyService : Service() {
         } catch (e: Exception) { }
     }
     private var voiceList: List<Voice> = emptyList()
+
+    // ---------------- Mic ki "beep" chup ----------------
+    // Google ka speech recognizer har baar sunna shuru/khatam karte waqt beep bajata hai.
+    // Us pal ke liye awaaz mute kar dete hain, phir turant wapas chalu.
+    private var mutedStreams: List<Int> = emptyList()
+    private val unmuteRunnable = Runnable { muteBeep(false) }
+
+    private fun muteBeep(on: Boolean) {
+        handler.removeCallbacks(unmuteRunnable)
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (on) {
+            if (mutedStreams.isEmpty()) {
+                val want = arrayListOf(AudioManager.STREAM_SYSTEM, AudioManager.STREAM_NOTIFICATION)
+                // Gaana baj raha ho (aur Lilly ne roka na ho) toh use mat chhedo
+                val musicPlaying = try { am.isMusicActive } catch (e: Exception) { false }
+                if (hasFocus || !musicPlaying) want.add(AudioManager.STREAM_MUSIC)
+                val done = ArrayList<Int>()
+                for (st in want) {
+                    try {
+                        // Jo user ne khud mute kiya hai use hum baad me unmute na kar dein
+                        if (!am.isStreamMute(st)) {
+                            am.adjustStreamVolume(st, AudioManager.ADJUST_MUTE, 0)
+                            done.add(st)
+                        }
+                    } catch (e: Exception) { }
+                }
+                mutedStreams = done
+                prefs.edit().putString("muted_streams", done.joinToString(",")).apply()
+            }
+            // Kuch bhi atke, 3 sec me awaaz wapas aa hi jaaye
+            handler.postDelayed(unmuteRunnable, 3000)
+        } else if (mutedStreams.isNotEmpty()) {
+            for (st in mutedStreams) {
+                try { am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0) } catch (e: Exception) { }
+            }
+            mutedStreams = emptyList()
+            prefs.edit().remove("muted_streams").apply()
+        }
+    }
+
+    private fun unmuteSoon(delay: Long) {
+        handler.removeCallbacks(unmuteRunnable)
+        handler.postDelayed(unmuteRunnable, delay)
+    }
+
+    /** Pichhli baar app achanak band hua ho aur awaaz mute reh gayi ho toh wapas chalu karo */
+    private fun restoreMutedStreams() {
+        val saved = prefs.getString("muted_streams", null) ?: return
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        for (part in saved.split(",")) {
+            val st = part.trim().toIntOrNull() ?: continue
+            try { am.adjustStreamVolume(st, AudioManager.ADJUST_UNMUTE, 0) } catch (e: Exception) { }
+        }
+        prefs.edit().remove("muted_streams").apply()
+    }
     private val prefs by lazy { getSharedPreferences("lilly", Context.MODE_PRIVATE) }
 
     /** Recognizer kabhi-kabhi atak jaata hai — har 10 sec dekho, 20 sec se chup ho toh naya bana do */
@@ -193,6 +248,7 @@ class LillyService : Service() {
         if (!started) {
             started = true
             brain = LillyBrain(this)
+            restoreMutedStreams()
             initTts(useGoogle = true)
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lilly::listen").apply {
@@ -396,6 +452,14 @@ class LillyService : Service() {
         mode = Mode.SPEAKING
         LillyBus.status(display)
         LillyBus.orb(OrbView.State.SPEAKING)
+        if (mutedStreams.isNotEmpty()) {
+            // Recognizer ki "khatam" wali beep nikal jaane do, phir awaaz kholkar bolo
+            handler.postDelayed({
+                muteBeep(false)
+                say(display, spoken, then)
+            }, 250)
+            return
+        }
         val t = tts
         if (!ttsReady || t == null) {
             handler.postDelayed({
@@ -546,8 +610,10 @@ class LillyService : Service() {
         lastEvent = System.currentTimeMillis()
         try {
             r.cancel()
+            muteBeep(true)
             r.startListening(recognizerIntent(newMode == Mode.COMMAND))
         } catch (e: Exception) {
+            muteBeep(false)
             restartLater(800)
         }
     }
@@ -559,17 +625,18 @@ class LillyService : Service() {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onReadyForSpeech(params: Bundle?) { unmuteSoon(350) }
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) {
             if (mode == Mode.COMMAND) LillyBus.level(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
         }
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
+        override fun onEndOfSpeech() { muteBeep(true) }
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
             lastEvent = System.currentTimeMillis()
+            unmuteSoon(450)
             when (mode) {
                 Mode.COMMAND ->
                     if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
@@ -599,6 +666,7 @@ class LillyService : Service() {
 
         override fun onResults(results: Bundle?) {
             lastEvent = System.currentTimeMillis()
+            unmuteSoon(450)
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
             handleResults(list)
         }
@@ -766,6 +834,7 @@ class LillyService : Service() {
         mode = Mode.STOPPED
         started = false
         handler.removeCallbacksAndMessages(null)
+        muteBeep(false)
         currentUtterance = null
         stopVosk()
         floating?.hide()

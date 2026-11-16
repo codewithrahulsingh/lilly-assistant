@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "3.0"
+        versionCode = 10
+        versionName = "3.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

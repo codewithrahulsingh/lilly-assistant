@@ -37,6 +37,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var voiceValue: TextView
     private lateinit var aiValue: TextView
     private lateinit var lockPopupValue: TextView
+    private lateinit var musicValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -192,6 +193,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r7 = row(col)
         lockPopupValue = card(r7, "🔓", "Lock screen par orb") { lockPopupSetup() }
+        musicValue = card(r7, "🎵", "Gaana auto-play") { musicSetup() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -208,6 +210,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun refreshCards() {
         aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — har baat ka jawab chahiye toh ON karein" else "ON ✓"
         lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap karke allow karein"
+        musicValue.text = if (MusicControl.hasAccess(this)) "Spotify ON ✓" else "Abhi YouTube se — Spotify ke liye tap"
         val allowed = prefs.getStringSet("allowed_apps", null)
         allowedValue.text = if (allowed == null) "Sab apps allowed" else "${allowed.size} apps allowed"
         voiceValue.text =
@@ -431,6 +434,40 @@ class MainActivity : Activity(), LillyBus.Ui {
             )
             .setPositiveButton("Permission") { _, _ ->
                 tryStart(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+            .setNeutralButton("App info") { _, _ ->
+                tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Rehne do", null)
+            .show()
+    }
+
+    private fun musicSetup() {
+        if (MusicControl.hasAccess(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("ON hai ✓")
+                .setMessage(
+                    "Ab \"Lilly, Kesariya chalao\" bolne par Spotify me gaana khud bajne lagega.\n\n" +
+                        "YouTube par chahiye toh boliye: \"YouTube par Kesariya chalao\"."
+                )
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Spotify me gaana khud chale")
+            .setMessage(
+                "Spotify bahar ke app se sirf search kholta hai, gaana nahi chalata. " +
+                    "Isliye abhi Lilly gaane YouTube par chalati hai.\n\n" +
+                    "Spotify me seedha gaana chalane ke liye agli screen par \"Lilly\" ko ON kijiye " +
+                    "(Notification access). Lilly aapke notifications padhti ya kahin bhejti nahi hai; " +
+                    "ye permission sirf music app ko \"ye gaana chalao\" bolne ke liye hai.\n\n" +
+                    "Agar \"Restricted setting\" aaye:\n" +
+                    "1. \"App info\" dabaiye\n" +
+                    "2. Upar ⋮ (3 dots) → \"Allow restricted settings\"\n" +
+                    "3. Wapas aakar \"Permission\" dabaiye aur ON kijiye"
+            )
+            .setPositiveButton("Permission") { _, _ ->
+                tryStart(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
             .setNeutralButton("App info") { _, _ ->
                 tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
