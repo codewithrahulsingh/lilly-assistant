@@ -8,6 +8,8 @@ object LillyBus {
         fun onOrb(state: OrbView.State)
         fun onLevel(level: Float)
         fun onRunning(running: Boolean)
+        /** Ek baat-cheet poori hui (popup band karne ke liye) */
+        fun onSessionEnd() {}
     }
 
     var ui: Ui? = null
@@ -22,4 +24,5 @@ object LillyBus {
     fun heard(t: String) { lastHeard = t; ui?.onHeard(t) }
     fun orb(s: OrbView.State) { lastOrb = s; ui?.onOrb(s) }
     fun level(l: Float) { ui?.onLevel(l) }
+    fun endSession() { ui?.onSessionEnd() }
 }

@@ -1,5 +1,9 @@
 # Lilly – Personal Voice Assistant (Android)
 
+**v2.0 — Siri jaisa:** "Lilly" bolo → "ting" ki awaaz, screen jagti hai aur neeche orb aata hai
+(lock screen par bhi) → command bolo. "Lilly" pehchanne ka kaam ab poori tarah **phone ke andar (offline)**
+hota hai, isliye baar-baar beep nahi, battery kam, aur aapki awaaz bahar nahi jaati jab tak "Lilly" na bolo.
+
 "Lilly" boliye → Lilly "Haan bolo" kehti hai → apna kaam boliye.
 
 ## Lilly abhi kya kar sakti hai
