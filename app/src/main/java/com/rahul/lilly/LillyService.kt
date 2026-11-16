@@ -168,7 +168,7 @@ class LillyService : Service() {
         if (!started) {
             started = true
             brain = LillyBrain(this)
-            tts = TextToSpeech(this) { st -> if (st == TextToSpeech.SUCCESS) handler.post { setupVoice() } }
+            initTts(useGoogle = true)
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lilly::listen").apply {
                 setReferenceCounted(false)
@@ -252,6 +252,25 @@ class LillyService : Service() {
      * Sabse natural Hindi female awaaz chuno. Google ki "network" (neural) awaazein
      * offline wali se kaafi zyada insaan jaisi lagti hain, isliye unhe pehle rakha hai.
      */
+    /** Google ka TTS engine sabse natural Hindi awaaz deta hai, isliye pehle wahi try karo */
+    private fun initTts(useGoogle: Boolean) {
+        val listener = TextToSpeech.OnInitListener { st ->
+            handler.post {
+                if (mode == Mode.STOPPED) return@post
+                if (st == TextToSpeech.SUCCESS) setupVoice()
+                else if (useGoogle) {
+                    try { tts?.shutdown() } catch (e: Exception) { }
+                    initTts(useGoogle = false)
+                }
+            }
+        }
+        tts = try {
+            if (useGoogle) TextToSpeech(this, listener, "com.google.android.tts") else TextToSpeech(this, listener)
+        } catch (e: Exception) {
+            TextToSpeech(this, listener)
+        }
+    }
+
     private fun rankVoices(t: TextToSpeech): List<Voice> {
         val all = try { t.voices?.toList() ?: emptyList() } catch (e: Exception) { emptyList() }
         val hindi = all.filter { it.locale.language == "hi" && !it.features.contains("notInstalled") }
@@ -279,6 +298,7 @@ class LillyService : Service() {
     private fun setupVoice() {
         val t = tts ?: return
         voiceList = rankVoices(t)
+        prefs.edit().putBoolean("has_hi_voice", voiceList.isNotEmpty()).apply()
         val saved = prefs.getString("voice", null)
         val chosen = voiceList.firstOrNull { it.name == saved } ?: voiceList.firstOrNull()
         applyVoice(t, chosen)
@@ -526,7 +546,7 @@ class LillyService : Service() {
 
         override fun onPartialResults(partialResults: Bundle?) {
             val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (mode == Mode.COMMAND && !t.isNullOrBlank()) LillyBus.heard(t)
+            if (mode == Mode.COMMAND && !t.isNullOrBlank()) LillyBus.heard(brain.roman(t))
         }
 
         override fun onResults(results: Bundle?) {
@@ -627,7 +647,8 @@ class LillyService : Service() {
         floating?.hideSoon()
     }
 
-    private fun runCommand(text: String, alternatives: List<String>) {
+    private fun runCommand(rawText: String, alternatives: List<String>) {
+        val text = brain.roman(rawText) // screen par Hinglish/English me dikhao
         LillyBus.heard("“$text”")
         val reply = brain.handle(text, alternatives)
         say(reply.display, reply.spoken) {

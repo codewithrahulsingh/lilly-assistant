@@ -33,6 +33,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var appsValue: TextView
     private lateinit var batteryValue: TextView
     private lateinit var langValue: TextView
+    private lateinit var allowedValue: TextView
+    private lateinit var voiceValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -168,8 +170,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val r2 = row(col)
         card(r2, "▶️", "Awaaz suno") { sendToEngine(LillyService.ACTION_TEST_VOICE) }
             .text = "Abhi wali awaaz test"
-        card(r2, "⬇️", "Natural awaaz") { openTtsSettings() }
-            .text = "Hindi voice download"
+        voiceValue = card(r2, "⬇️", "Natural awaaz") { downloadVoice() }
 
         val r3 = row(col)
         appsValue = card(r3, "📱", "Har screen par orb + apps") { appsAnywhere() }
@@ -182,6 +183,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         val r5 = row(col)
         langValue = card(r5, "🗣", "Sunne ki bhasha") { chooseLanguage() }
         card(r5, "🔕", "Notification chhupao") { hideNotification() }.text = "Tap karke OFF karein"
+
+        val r6 = row(col)
+        allowedValue = card(r6, "✅", "Voice se khulne wale apps") { chooseApps() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -196,6 +200,10 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun refreshCards() {
+        val allowed = prefs.getStringSet("allowed_apps", null)
+        allowedValue.text = if (allowed == null) "Sab apps allowed" else "${allowed.size} apps allowed"
+        voiceValue.text =
+            if (prefs.getBoolean("has_hi_voice", true)) "Behtar Hindi voice download" else "Hindi voice nahi mili — download karein"
         langValue.text = langLabel(prefs.getString("lang", "hi") ?: "hi")
         lockValue.text = lockLabel(prefs.getString("lock_mode", "fav") ?: "fav")
         appsValue.text = if (Settings.canDrawOverlays(this)) "ON ✓" else "OFF — tap karke ON karein"
@@ -234,6 +242,57 @@ class MainActivity : Activity(), LillyBus.Ui {
                 refreshCards()
                 d.dismiss()
             }
+            .show()
+    }
+
+    /** User chunta hai ki Lilly voice se kaunse apps khol sakti hai */
+    private fun chooseApps() {
+        val pm = packageManager
+        val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+            .filter { it.first != packageName }
+            .distinctBy { it.first }
+            .sortedBy { it.second.lowercase() }
+        val saved = prefs.getStringSet("allowed_apps", null)
+        val checked = BooleanArray(apps.size) { saved == null || apps[it].first in saved }
+        AlertDialog.Builder(this)
+            .setTitle("Lilly voice se kaunse apps khol sake?")
+            .setMultiChoiceItems(apps.map { it.second }.toTypedArray(), checked) { _, i, c -> checked[i] = c }
+            .setPositiveButton("Save") { _, _ ->
+                val set = apps.filterIndexed { i, _ -> checked[i] }.map { it.first }.toSet()
+                prefs.edit().putStringSet("allowed_apps", set).apply()
+                refreshCards()
+            }
+            .setNeutralButton("Sab allow") { _, _ ->
+                prefs.edit().remove("allowed_apps").apply()
+                refreshCards()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun downloadVoice() {
+        AlertDialog.Builder(this)
+            .setTitle("Behtar ladki ki awaaz")
+            .setMessage(
+                "Lilly Google ki Hindi awaaz use karti hai. Sabse achhi awaaz ke liye:\n\n" +
+                    "1. \"Voice download\" dabaiye aur Hindi (India) download kijiye\n" +
+                    "2. Play Store me \"Speech Recognition & Synthesis\" (Google) update kijiye\n" +
+                    "3. Wapas aakar \"Awaaz badlo\" se alag-alag awaaz sun kar pasand ki chuniye\n\n" +
+                    "Internet ON ho toh Lilly Google ki sabse natural (online) awaaz khud chun leti hai."
+            )
+            .setPositiveButton("Voice download") { _, _ ->
+                val ok = tryStart(
+                    Intent("android.speech.tts.engine.INSTALL_TTS_DATA").setPackage("com.google.android.tts")
+                )
+                if (!ok) openTtsSettings()
+            }
+            .setNeutralButton("Play Store") { _, _ ->
+                if (!tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.tts")))) {
+                    openTtsSettings()
+                }
+            }
+            .setNegativeButton("Band", null)
             .show()
     }
 

@@ -46,8 +46,54 @@ class LillyBrain(private val ctx: Context) {
 
     // ---------- Commands ----------
 
-    fun handle(text: String, alternatives: List<String>): Reply {
-        val candidates = (listOf(text) + alternatives.map { stripWakeWord(it) })
+    // ---------- Hindi lipi -> Roman (Hinglish) ----------
+
+    private val hiWords = mapOf(
+        "ओपन" to "open", "खोलो" to "kholo", "खोल" to "khol", "खोलिए" to "kholiye", "खोलें" to "kholein",
+        "दो" to "do", "करो" to "karo", "कर" to "kar", "करना" to "karna", "करें" to "karein", "कीजिए" to "kijiye",
+        "को" to "ko", "से" to "se", "पर" to "par", "पे" to "pe", "की" to "ki", "का" to "ka", "के" to "ke",
+        "कॉल" to "call", "काल" to "call", "फोन" to "phone", "फ़ोन" to "phone", "लगाओ" to "lagao",
+        "लगा" to "laga", "मिलाओ" to "milao", "डायल" to "dial",
+        "टॉर्च" to "torch", "टोर्च" to "torch", "फ्लैशलाइट" to "flashlight", "फ्लैश" to "flash",
+        "जलाओ" to "jalao", "जला" to "jala", "बंद" to "band", "बुझाओ" to "bujhao", "बुझा" to "bujha",
+        "ऑन" to "on", "ऑफ" to "off", "चालू" to "chalu",
+        "टाइम" to "time", "समय" to "samay", "बजे" to "baje", "कितने" to "kitne", "क्या" to "kya",
+        "है" to "hai", "हैं" to "hain", "हुआ" to "hua", "तारीख" to "tarikh", "तारीख़" to "tarikh",
+        "डेट" to "date", "आज" to "aaj", "दिन" to "din",
+        "चलाओ" to "chalao", "चला" to "chala", "स्टार्ट" to "start", "लॉन्च" to "launch", "प्लीज" to "please",
+        "ऐप" to "app", "एप" to "app", "एप्लीकेशन" to "app",
+        "यूट्यूब" to "youtube", "व्हाट्सएप" to "whatsapp", "व्हाट्सऐप" to "whatsapp", "वॉट्सऐप" to "whatsapp",
+        "वॉट्सएप" to "whatsapp", "व्हाट्सप्प" to "whatsapp", "इंस्टाग्राम" to "instagram", "इंस्टा" to "instagram",
+        "कैमरा" to "camera", "सेटिंग" to "settings", "सेटिंग्स" to "settings", "फेसबुक" to "facebook",
+        "गूगल" to "google", "क्रोम" to "chrome", "मैप" to "maps", "मैप्स" to "maps", "गैलरी" to "gallery",
+        "फोटो" to "photos", "फोटोज" to "photos", "स्नैपचैट" to "snapchat", "टेलीग्राम" to "telegram",
+        "स्पॉटिफाई" to "spotify", "कैलकुलेटर" to "calculator", "कैलेंडर" to "calendar", "मैसेज" to "messages",
+        "मैसेजेस" to "messages", "जीमेल" to "gmail", "प्ले" to "play", "स्टोर" to "store", "पेटीएम" to "paytm",
+        "फोनपे" to "phonepe", "घड़ी" to "clock", "क्लॉक" to "clock", "म्यूजिक" to "music", "ट्विटर" to "twitter",
+        "अमेज़न" to "amazon", "अमेजन" to "amazon", "फ्लिपकार्ट" to "flipkart", "नेटफ्लिक्स" to "netflix",
+        "कैसी" to "kaisi", "कैसे" to "kaise", "हो" to "ho", "कौन" to "kaun", "तुम" to "tum",
+        "तुम्हारा" to "tumhara", "नाम" to "naam", "धन्यवाद" to "dhanyavad", "शुक्रिया" to "shukriya",
+        "थैंक" to "thank", "थैंक्स" to "thanks", "थैंक्यू" to "thank you", "यू" to "you", "बाय" to "bye",
+        "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
+    )
+
+    /** Suni hui baat ko Roman/Hinglish me badalta hai: "ओपन यूट्यूब" -> "open youtube" */
+    fun roman(t: String): String {
+        if (t.none { it in 'ऀ'..'ॿ' }) return t
+        return t.split(Regex("\\s+")).filter { it.isNotBlank() }.joinToString(" ") { w ->
+            val core = w.trim(',', '.', '?', '!', '।')
+            hiWords[core] ?: if (core.any { it in 'ऀ'..'ॿ' }) transliterate(core) else core
+        }
+    }
+
+    private fun isAppAllowed(pkg: String): Boolean {
+        val set = prefs.getStringSet("allowed_apps", null) ?: return true
+        return pkg in set
+    }
+
+    fun handle(rawText: String, alternatives: List<String>): Reply {
+        val text = roman(rawText)
+        val candidates = (listOf(text) + alternatives.map { stripWakeWord(roman(it)) })
             .filter { it.isNotBlank() }.distinct()
         val t = text.lowercase(Locale.ROOT).trim()
 
@@ -85,7 +131,7 @@ class LillyBrain(private val ctx: Context) {
     // ---------- Call ----------
 
     private val callWords = "call|phone|fone|fon|dial|कॉल|काल|फोन|फ़ोन"
-    private val doWords = "karo|kar do|kardo|lagao|laga do|kijiye|karna|milao|please|करो|कर दो|लगाओ|लगा दो|कीजिए|करना|मिलाओ|करें"
+    private val doWords = "karo|kar do|kardo|lagao|laga do|kijiye|karna|karein|milao|please|करो|कर दो|लगाओ|लगा दो|कीजिए|करना|मिलाओ|करें"
     private val callPatterns = listOf(
         Regex("""^(.+?)\s+(?:ko|को|se|से)\s+(?:$callWords)(?:\s+.*)?$""", ic),
         Regex("""^(?:please\s+)?(?:$callWords)\s+(?:karo\s+|to\s+)?(.+?)(?:\s+(?:ko|को))?(?:\s+(?:$doWords))?$""", ic),
@@ -260,7 +306,8 @@ class LillyBrain(private val ctx: Context) {
         'ै' to "ai", 'ो' to "o", 'ौ' to "au", 'ृ' to "ri", 'ॉ' to "o"
     )
 
-    private fun transliterate(s: String): String {
+    private fun transliterate(input: String): String {
+        val s = input.replace("़", "") // nukta hatao
         val out = StringBuilder()
         var i = 0
         while (i < s.length) {
@@ -279,6 +326,8 @@ class LillyBrain(private val ctx: Context) {
                     }
                 }
                 vowels.containsKey(ch) -> out.append(vowels[ch])
+                matras.containsKey(ch) -> out.append(matras[ch])
+                ch == '्' -> {}
                 ch == 'ं' || ch == 'ँ' -> out.append("n")
                 ch == 'ः' -> out.append("h")
                 ch == '़' -> {}
@@ -333,7 +382,7 @@ class LillyBrain(private val ctx: Context) {
     // ---------- Apps ----------
 
     private val openPatterns = listOf(
-        Regex("""^(?:open|start|launch)\s+(.+)$""", ic),
+        Regex("""^(?:please\s+)?(?:open|start|launch|kholo|chalao)\s+(.+?)(?:\s+(?:karo|kar do|kardo|kijiye|please))?$""", ic),
         Regex("""^(.+?)\s+(?:kholo|khol do|kholdo|open karo|open kar do|open|chalao|chala do|start karo|खोलो|खोल दो|खोलिए|खोलें|चलाओ|चला दो|ओपन करो|ओपन कर दो|open करो|open कर दो|ओपन)$""", ic)
     )
     private val appAliases = mapOf(
@@ -352,7 +401,9 @@ class LillyBrain(private val ctx: Context) {
     private fun appTarget(t: String): String? {
         for (p in openPatterns) {
             val m = p.find(t) ?: continue
-            var name = m.groupValues[1].trim().removeSuffix(" app").removeSuffix(" ऐप").trim()
+            var name = m.groupValues[1].trim().lowercase(Locale.ROOT)
+                .removePrefix("the ").removePrefix("my ")
+                .removeSuffix(" ko").removeSuffix(" application").removeSuffix(" app").removeSuffix(" ऐप").trim()
             name = appAliases[name] ?: name
             if (name.isNotBlank()) return name
         }
@@ -380,6 +431,12 @@ class LillyBrain(private val ctx: Context) {
                     ?: labels.firstOrNull { it.second.contains(target) }
                     ?: (if (sk.length >= 3) labels.firstOrNull { appSkeleton(it.second) == sk } else null)
                 )?.first
+            if (match != null && !isAppAllowed(match.activityInfo.packageName)) {
+                return Reply(
+                    "$display kholne ki permission nahi di hai. Lilly app me allow kijiye",
+                    "$display खोलने की परमिशन नहीं दी है"
+                )
+            }
             match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
         } ?: return Reply("\"$display\" app nahi mila", "$display ऐप नहीं मिला")
 
