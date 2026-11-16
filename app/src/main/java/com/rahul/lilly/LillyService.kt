@@ -153,6 +153,11 @@ class LillyService : Service() {
             try { recognizer?.destroy() } catch (e: Exception) { }
             recognizer = null
             listen(Mode.WAKE)
+        } else if (mode == Mode.COMMAND && System.currentTimeMillis() - lastEvent > 15_000) {
+            try { recognizer?.destroy() } catch (e: Exception) { }
+            recognizer = null
+            endSession()
+            listen(Mode.WAKE)
         }
         scheduleWatchdog()
     }
@@ -324,9 +329,9 @@ class LillyService : Service() {
         applyVoice(t, chosen)
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) = finishSpeaking()
+            override fun onDone(id: String?) = finishSpeaking(id)
             @Deprecated("Deprecated in Java")
-            override fun onError(id: String?) = finishSpeaking()
+            override fun onError(id: String?) = finishSpeaking(id)
             override fun onError(id: String?, errorCode: Int) {
                 // Network awaaz fail ho (internet nahi) toh offline awaaz par aa jao
                 if (tts?.voice?.isNetworkConnectionRequired == true) {
@@ -335,7 +340,7 @@ class LillyService : Service() {
                         tts?.let { applyVoice(it, offline) }
                     }
                 }
-                finishSpeaking()
+                finishSpeaking(id)
             }
         })
         ttsReady = true
@@ -366,9 +371,16 @@ class LillyService : Service() {
         say(voiceLabel(), "नमस्ते, मैं लिली हूँ। ये आवाज़ कैसी लगी?") { if (back) listen(Mode.WAKE) }
     }
 
-    private fun finishSpeaking() {
+    private var currentUtterance: String? = null
+    private val speakTimeout = Runnable { finishSpeaking(currentUtterance) }
+
+    private fun finishSpeaking(id: String?) {
         handler.post {
             if (mode == Mode.STOPPED) return@post
+            // Purane vakya ka signal ho toh ignore karo (warna Lilly apni hi awaaz sunne lagti hai)
+            if (id == null || id != currentUtterance) return@post
+            currentUtterance = null
+            handler.removeCallbacks(speakTimeout)
             val next = afterSpeak
             afterSpeak = null
             if (mode == Mode.SPEAKING) mode = Mode.WAKE
@@ -393,7 +405,16 @@ class LillyService : Service() {
             return
         }
         afterSpeak = then
-        t.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "lilly-" + System.nanoTime())
+        val id = "lilly-" + System.nanoTime()
+        currentUtterance = id
+        handler.removeCallbacks(speakTimeout)
+        val result = t.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, id)
+        if (result != TextToSpeech.SUCCESS) {
+            finishSpeaking(id)
+        } else {
+            // Engine "khatam" na bataye toh bhi aage badho: lambai ke hisaab se intezaar
+            handler.postDelayed(speakTimeout, (4000L + spoken.length * 130L).coerceAtMost(30_000L))
+        }
     }
 
     // ---------------- Listening ----------------
@@ -570,7 +591,10 @@ class LillyService : Service() {
 
         override fun onPartialResults(partialResults: Bundle?) {
             val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (mode == Mode.COMMAND && !t.isNullOrBlank()) LillyBus.heard(brain.roman(t))
+            if (mode == Mode.COMMAND && !t.isNullOrBlank()) {
+                lastEvent = System.currentTimeMillis()
+                LillyBus.heard(brain.roman(t))
+            }
         }
 
         override fun onResults(results: Bundle?) {
@@ -742,6 +766,7 @@ class LillyService : Service() {
         mode = Mode.STOPPED
         started = false
         handler.removeCallbacksAndMessages(null)
+        currentUtterance = null
         stopVosk()
         floating?.hide()
         holdAudioFocus(false)
