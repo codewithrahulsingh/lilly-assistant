@@ -1,7 +1,8 @@
 package com.rahul.lilly
 
 import android.Manifest
-import android.app.Activity
+import android.app.KeyguardManager
+import android.telecom.TelecomManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,7 +18,7 @@ import java.util.Date
 import java.util.Locale
 
 /** Lilly ka dimaag: suni hui baat samajh kar jawab aur kaam tay karta hai. */
-class LillyBrain(private val activity: Activity) {
+class LillyBrain(private val ctx: Context) {
 
     /** display = screen par likha, spoken = jo Lilly bolegi, action = bolne ke baad kya karna hai */
     data class Reply(val display: String, val spoken: String, val action: (() -> Unit)? = null)
@@ -92,7 +93,7 @@ class LillyBrain(private val activity: Activity) {
     }
 
     private fun granted(p: String) =
-        activity.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+        ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun callReply(target: String): Reply {
         val digits = target.filter { it.isDigit() || it == '+' }
@@ -111,12 +112,24 @@ class LillyBrain(private val activity: Activity) {
 
     private fun startCall(number: String) {
         val uri = Uri.parse("tel:" + Uri.encode(number))
-        val action = if (granted(Manifest.permission.CALL_PHONE)) Intent.ACTION_CALL else Intent.ACTION_DIAL
-        try {
-            activity.startActivity(Intent(action, uri))
-        } catch (e: Exception) {
-            activity.startActivity(Intent(Intent.ACTION_DIAL, uri))
+        // TelecomManager se call lock screen par bhi bina app khole lag jaati hai
+        if (granted(Manifest.permission.CALL_PHONE)) {
+            try {
+                val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+                tm.placeCall(Uri.fromParts("tel", number, null), null)
+                return
+            } catch (e: Exception) { }
         }
+        launch(Intent(Intent.ACTION_DIAL, uri))
+    }
+
+    /** Phone locked hai ya nahi */
+    fun isLocked(): Boolean =
+        (ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+
+    private fun launch(intent: Intent) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { ctx.startActivity(intent) } catch (e: Exception) { }
     }
 
     private fun findContact(query: String): Contact? {
@@ -128,7 +141,7 @@ class LillyBrain(private val activity: Activity) {
             ContactsContract.CommonDataKinds.Phone.NUMBER
         )
         try {
-            activity.contentResolver.query(
+            ctx.contentResolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, null, null, null
             )?.use { cur ->
                 while (cur.moveToNext()) {
@@ -255,7 +268,7 @@ class LillyBrain(private val activity: Activity) {
     }
 
     private fun setTorch(on: Boolean): Boolean = try {
-        val cm = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val id = cm.cameraIdList.firstOrNull {
             cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
         }
@@ -310,7 +323,7 @@ class LillyBrain(private val activity: Activity) {
     }
 
     private fun openApp(name: String): Reply {
-        val pm = activity.packageManager
+        val pm = ctx.packageManager
         val display = name.replaceFirstChar { it.uppercase() }
         val special: Intent? = when (name) {
             "camera" -> Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
@@ -329,17 +342,12 @@ class LillyBrain(private val activity: Activity) {
             match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
         } ?: return Reply("\"$display\" app nahi mila", "$display ऐप नहीं मिला")
 
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return Reply("$display khol rahi hoon", "$display खोल रही हूँ") {
-            try { activity.startActivity(intent) } catch (e: Exception) { }
-        }
+        if (isLocked())
+            return Reply("Apps kholne ke liye pehle phone unlock kijiye", "ऐप खोलने के लिए पहले फ़ोन अनलॉक कीजिए")
+        return Reply("$display khol rahi hoon", "$display खोल रही हूँ") { launch(intent) }
     }
 
     private fun openAppSettings() {
-        try {
-            activity.startActivity(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + activity.packageName))
-            )
-        } catch (e: Exception) { }
+        launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
     }
 }
