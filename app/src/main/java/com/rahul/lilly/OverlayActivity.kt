@@ -1,6 +1,8 @@
 package com.rahul.lilly
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -25,6 +27,26 @@ class OverlayActivity : Activity(), LillyBus.Ui {
     private lateinit var heard: TextView
     private lateinit var status: TextView
     private val handler = Handler(Looper.getMainLooper())
+    private val myLauncher: (Intent) -> Boolean = { launch(it) }
+
+    /** App kholna — phone lock ho toh pehle fingerprint/PIN maangta hai */
+    private fun launch(intent: Intent): Boolean {
+        handler.removeCallbacksAndMessages(null)
+        val km = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+        if (km.isKeyguardLocked && Build.VERSION.SDK_INT >= 26) {
+            km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { go(intent) }
+                override fun onDismissCancelled() { finish() }
+                override fun onDismissError() { finish() }
+            })
+        } else go(intent)
+        return true
+    }
+
+    private fun go(intent: Intent) {
+        try { startActivity(intent) } catch (e: Exception) { }
+        finish()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +107,7 @@ class OverlayActivity : Activity(), LillyBus.Ui {
     override fun onResume() {
         super.onResume()
         LillyBus.ui = this
+        LillyBus.launcher = myLauncher
         heard.text = LillyBus.lastHeard
         status.text = LillyBus.lastStatus
         orb.state = LillyBus.lastOrb
@@ -95,6 +118,7 @@ class OverlayActivity : Activity(), LillyBus.Ui {
     override fun onPause() {
         handler.removeCallbacksAndMessages(null)
         if (LillyBus.ui === this) LillyBus.ui = null
+        if (LillyBus.launcher === myLauncher) LillyBus.launcher = null
         super.onPause()
     }
 

@@ -340,7 +340,11 @@ class LillyBrain(private val ctx: Context) {
         "इंस्टाग्राम" to "instagram", "insta" to "instagram",
         "कैमरा" to "camera", "सेटिंग" to "settings", "सेटिंग्स" to "settings", "setting" to "settings",
         "फेसबुक" to "facebook", "गूगल" to "google", "मैप" to "maps", "map" to "maps",
-        "गैलरी" to "gallery", "photos" to "photos", "क्रोम" to "chrome"
+        "गैलरी" to "gallery", "photos" to "photos", "क्रोम" to "chrome",
+        "phone pe" to "phonepe", "फोनपे" to "phonepe", "g pay" to "gpay", "google pay" to "gpay", "गूगल पे" to "gpay",
+        "पेटीएम" to "paytm", "स्नैपचैट" to "snapchat", "टेलीग्राम" to "telegram", "स्पॉटिफाई" to "spotify",
+        "कैलकुलेटर" to "calculator", "घड़ी" to "clock", "कैलेंडर" to "calendar", "मैसेज" to "messages",
+        "प्ले स्टोर" to "play store", "जीमेल" to "gmail", "फोटो" to "photos", "फोटोज" to "photos"
     )
 
     private fun appTarget(t: String): String? {
@@ -373,11 +377,21 @@ class LillyBrain(private val ctx: Context) {
             match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
         } ?: return Reply("\"$display\" app nahi mila", "$display ऐप नहीं मिला")
 
-        if (isLocked())
-            return Reply("Apps kholne ke liye pehle phone unlock kijiye", "ऐप खोलने के लिए पहले फ़ोन अनलॉक कीजिए")
-        if (LillyBus.ui == null)
-            return Reply("Apps kholne ke liye Lilly app khol kar boliye", "ऐप खोलने के लिए लिली ऐप खोलकर बोलिए")
-        return Reply("$display khol rahi hoon", "$display खोल रही हूँ") { launch(intent) }
+        return Reply("$display khol rahi hoon", "$display खोल रही हूँ") { openExternal(intent, display) }
+    }
+
+    /**
+     * App kholna: 1) jo Lilly screen/popup dikh rahi hai uske zariye (lock ho toh pehle unlock maangti hai)
+     * 2) "Display over other apps" ON ho toh seedha  3) warna ek tap wala notification
+     */
+    private fun openExternal(intent: Intent, label: String) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val l = LillyBus.launcher
+        if (l != null && l(intent)) return
+        if (!isLocked() && Settings.canDrawOverlays(ctx)) {
+            try { ctx.startActivity(intent); return } catch (e: Exception) { }
+        }
+        LillyService.notifyOpen(ctx, label, intent)
     }
 
     private fun openAppSettings() {

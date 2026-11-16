@@ -10,6 +10,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -44,6 +49,29 @@ class LillyService : Service() {
         const val ACTION_TEST_VOICE = "com.rahul.lilly.TEST_VOICE"
         private const val START_CHANNEL = "lilly_start"
         private const val START_NOTIF_ID = 8
+
+        /** Jab background se app seedha na khul paaye, tab ek tap wala notification */
+        fun notifyOpen(ctx: Context, label: String, intent: Intent) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel("lilly_open", "App kholna", NotificationManager.IMPORTANCE_HIGH).apply {
+                    setSound(null, null)
+                }
+            )
+            val pi = PendingIntent.getActivity(
+                ctx, 5, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(ctx, "lilly_open")
+                .setSmallIcon(R.drawable.ic_stat_lilly)
+                .setContentTitle("$label kholne ke liye tap karein")
+                .setContentText("Lilly")
+                .setColor(0xFF7B2FF7.toInt())
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setTimeoutAfter(30_000)
+                .build()
+            try { nm.notify(10, n) } catch (e: Exception) { }
+        }
 
         /** Jab Lilly background se khud shuru na ho paaye (jaise phone restart), tab tap karke chalu karne wala notification */
         fun notifyTapToStart(ctx: Context) {
@@ -90,6 +118,7 @@ class LillyService : Service() {
     private var lastEvent = 0L
     private var voskModel: Model? = null
     private var voskService: SpeechService? = null
+    private var voskRec: Recognizer? = null
     private var voskLoading = false
     private var voiceList: List<Voice> = emptyList()
     private val prefs by lazy { getSharedPreferences("lilly", Context.MODE_PRIVATE) }
@@ -177,13 +206,18 @@ class LillyService : Service() {
         )
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_lilly)
-            .setContentTitle("Lilly sun rahi hai")
-            .setContentText("\"Lilly\" boliye — lock screen par bhi")
+            .setLargeIcon(orbBitmap())
+            .setContentTitle("Lilly active hai ✨")
+            .setContentText("Boliye \"Hey Lilly\" — main sun rahi hoon")
+            .setSubText("Assistant")
+            .setColor(0xFF7B2FF7.toInt())
+            .setColorized(true)
             .setContentIntent(open)
             .setOngoing(true)
+            .setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(Notification.Action.Builder(null, "Baat karo", talk).build())
-            .addAction(Notification.Action.Builder(null, "Band karo", stop).build())
+            .addAction(Notification.Action.Builder(null, "🎙 Baat karo", talk).build())
+            .addAction(Notification.Action.Builder(null, "⏻ Band karo", stop).build())
             .build()
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -195,6 +229,20 @@ class LillyService : Service() {
         } catch (e: Exception) {
             false
         }
+    }
+
+    private fun orbBitmap(): Bitmap {
+        val size = 128
+        val b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(b)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = RadialGradient(
+            size * 0.38f, size * 0.36f, size * 0.7f,
+            intArrayOf(0xFF7FE9FF.toInt(), 0xFF7B2FF7.toInt(), 0xFFF107A3.toInt()),
+            null, Shader.TileMode.CLAMP
+        )
+        c.drawCircle(size / 2f, size / 2f, size / 2f, p)
+        return b
     }
 
     // ---------------- Voice (TTS) ----------------
@@ -279,9 +327,11 @@ class LillyService : Service() {
 
     private fun finishSpeaking() {
         handler.post {
+            if (mode == Mode.STOPPED) return@post
             val next = afterSpeak
             afterSpeak = null
-            next?.invoke()
+            if (mode == Mode.SPEAKING) mode = Mode.WAKE
+            if (next != null) next.invoke() else restartLater(200)
         }
     }
 
@@ -295,7 +345,10 @@ class LillyService : Service() {
         LillyBus.orb(OrbView.State.SPEAKING)
         val t = tts
         if (!ttsReady || t == null) {
-            handler.postDelayed({ then?.invoke() }, 1200)
+            handler.postDelayed({
+                if (mode == Mode.SPEAKING) mode = Mode.WAKE
+                if (then != null) then.invoke() else restartLater(200)
+            }, 1200)
             return
         }
         afterSpeak = then
@@ -341,13 +394,14 @@ class LillyService : Service() {
             })
     }
 
-    private val wakeGrammar = "[\"lily\", \"lilly\", \"hey lily\", \"[unk]\"]"
+    private val wakeGrammar = "[\"hey lily\", \"hi lily\", \"hey\", \"hi\", \"lily\", \"[unk]\"]"
 
     private fun startVosk(): Boolean {
         val model = voskModel ?: return false
         stopVosk()
         return try {
             val rec = Recognizer(model, 16000.0f, wakeGrammar)
+            voskRec = rec
             voskService = SpeechService(rec, 16000.0f).also { it.startListening(voskListener) }
             true
         } catch (e: Exception) {
@@ -356,16 +410,21 @@ class LillyService : Service() {
     }
 
     private fun stopVosk() {
-        val v = voskService ?: return
+        val v = voskService
         voskService = null
-        try { v.stop() } catch (e: Exception) { }
-        try { v.shutdown() } catch (e: Exception) { }
+        if (v != null) {
+            try { v.stop() } catch (e: Exception) { }
+            try { v.shutdown() } catch (e: Exception) { }
+        }
+        val r = voskRec
+        voskRec = null
+        try { r?.close() } catch (e: Exception) { }
     }
 
     private fun isWakeText(json: String?, key: String): Boolean {
         if (json.isNullOrBlank()) return false
         val text = try { JSONObject(json).optString(key) } catch (e: Exception) { "" }
-        return Regex("""\blil+y\b""").containsMatchIn(text)
+        return Regex("""\b(hey|hi)\s+lil+y\b""").containsMatchIn(text)
     }
 
     private val voskListener = object : org.vosk.android.RecognitionListener {
@@ -393,7 +452,7 @@ class LillyService : Service() {
             try { recognizer?.cancel() } catch (e: Exception) { }
             mode = Mode.WAKE
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Lilly\" boliye ya orb dabaiye")
+            LillyBus.status("\"Hey Lilly\" boliye")
             lastEvent = System.currentTimeMillis()
             if (!startVosk()) restartLater(1500)
             return
@@ -407,7 +466,7 @@ class LillyService : Service() {
             LillyBus.status("Sun rahi hoon…")
         } else {
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Lilly\" boliye ya orb dabaiye")
+            LillyBus.status("\"Hey Lilly\" boliye")
         }
         lastEvent = System.currentTimeMillis()
         try {
@@ -490,12 +549,7 @@ class LillyService : Service() {
         stopVosk()
         LillyBus.heard("")
         if (!fromTap) showOverlay()
-        try {
-            if (tone == null) tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
-            tone?.startTone(ToneGenerator.TONE_PROP_ACK, 150)
-        } catch (e: Exception) { }
-        LillyBus.orb(OrbView.State.LISTENING)
-        handler.postDelayed({ listen(Mode.COMMAND) }, 250)
+        say("Haan baby, bolo kya karu?", "हाँ बेबी, बोलो क्या करूँ") { listen(Mode.COMMAND) }
     }
 
     // ---------------- Siri jaisa popup (lock screen par bhi) ----------------

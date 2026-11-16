@@ -13,6 +13,8 @@ object LillyBus {
     }
 
     var ui: Ui? = null
+    /** Jo screen abhi dikh rahi hai, wo apps khol sakti hai (Android background se rokta hai) */
+    var launcher: ((android.content.Intent) -> Boolean)? = null
     var running = false
         set(value) { field = value; ui?.onRunning(value) }
 
