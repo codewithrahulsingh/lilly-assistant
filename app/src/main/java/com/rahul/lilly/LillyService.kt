@@ -123,6 +123,26 @@ class LillyService : Service() {
     private var voskLoading = false
     private var floating: FloatingOrb? = null
     private var retries = 0
+    private var followUp = false
+    private var hasFocus = false
+    private val aiHistory = ArrayList<AiChat.Turn>()
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { }
+
+    /** Lilly sunte waqt gaana thodi der ke liye ruk jaata hai (Siri jaisa) */
+    @Suppress("DEPRECATION")
+    private fun holdAudioFocus(hold: Boolean) {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            if (hold && !hasFocus) {
+                hasFocus = am.requestAudioFocus(
+                    focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else if (!hold && hasFocus) {
+                am.abandonAudioFocus(focusListener)
+                hasFocus = false
+            }
+        } catch (e: Exception) { }
+    }
     private var voiceList: List<Voice> = emptyList()
     private val prefs by lazy { getSharedPreferences("lilly", Context.MODE_PRIVATE) }
 
@@ -532,13 +552,17 @@ class LillyService : Service() {
             when (mode) {
                 Mode.COMMAND ->
                     if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                        if (retries < 1) {
+                        if (followUp) {
+                            followUp = false
+                            endSession()
+                            listen(Mode.WAKE)
+                        } else if (retries < 1) {
                             retries++
                             listen(Mode.COMMAND)
                         } else {
                             say("Kuch sunai nahi diya", "कुछ सुनाई नहीं दिया") { endSession(); listen(Mode.WAKE) }
                         }
-                    } else restartLater(600)
+                    } else { endSession(); restartLater(600) }
                 Mode.WAKE -> restartLater(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1000 else 250)
                 else -> {}
             }
@@ -589,6 +613,9 @@ class LillyService : Service() {
         LillyBus.heard("")
         if (!fromTap) showOverlay()
         retries = 0
+        followUp = false
+        aiHistory.clear()
+        holdAudioFocus(true)
         say("Haan Rahul, bolo kya karu?", "हाँ राहुल, बोलो क्या करूँ") { listen(Mode.COMMAND) }
     }
 
@@ -603,11 +630,11 @@ class LillyService : Service() {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (brain.isLocked() || !pm.isInteractive) {
                 // Lock screen / screen band: popup seedha khulta hai aur screen jagata hai
+                // Saath me neeche wala full-screen notification bhi jaata hai, taaki ek na chale toh doosra chale
                 try {
                     startActivity(
                         Intent(this, OverlayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
-                    return
                 } catch (e: Exception) { }
             } else if (Build.VERSION.SDK_INT >= 26) {
                 // Home screen / koi bhi app: neeche se orb
@@ -645,18 +672,68 @@ class LillyService : Service() {
         getSystemService(NotificationManager::class.java).cancel(liveId)
         LillyBus.endSession()
         floating?.hideSoon()
+        holdAudioFocus(false)
+        followUp = false
     }
 
     private fun runCommand(rawText: String, alternatives: List<String>) {
         val text = brain.roman(rawText) // screen par Hinglish/English me dikhao
         LillyBus.heard("“$text”")
+        LillyBus.ui?.keepAlive()
+        followUp = false
         val reply = brain.handle(text, alternatives)
-        say(reply.display, reply.spoken) {
-            endSession()
-            reply.action?.invoke()
-            // Call chal rahi ho toh mic chhod do, call khatam hone ke baad phir sunna shuru
-            restartLater(if (reply.action != null) 4000 else 300)
+        val question = reply.askAi
+        if (question != null) {
+            askAi(question)
+            return
         }
+        say(reply.display, reply.spoken) {
+            if (reply.endChat || reply.action != null) {
+                endSession()
+                reply.action?.invoke()
+                // Call chal rahi ho toh mic chhod do, call khatam hone ke baad phir sunna shuru
+                restartLater(if (reply.action != null) 4000 else 300)
+            } else {
+                // Baat-cheet chal rahi hai: bina "Lilly" bole agla jawab suno
+                continueChat()
+            }
+        }
+    }
+
+    private fun continueChat() {
+        followUp = true
+        retries = 1
+        LillyBus.ui?.keepAlive()
+        listen(Mode.COMMAND)
+    }
+
+    /** Normal baat-cheet: sawal AI ko bhejo, jawab bol kar sunao */
+    private fun askAi(question: String) {
+        handler.removeCallbacks(wakeRunnable)
+        try { recognizer?.cancel() } catch (e: Exception) { }
+        mode = Mode.SPEAKING
+        LillyBus.status("Soch rahi hoon…")
+        LillyBus.orb(OrbView.State.SPEAKING)
+        LillyBus.ui?.keepAlive()
+        val key = prefs.getString("ai_key", "") ?: ""
+        val history = ArrayList(aiHistory)
+        Thread {
+            val result = try { AiChat.ask(key, history, question) } catch (e: Exception) { null }
+            handler.post {
+                if (mode == Mode.STOPPED) return@post
+                if (result == null) {
+                    say(
+                        "AI se jawab nahi mila. Internet aur AI key check kijiye",
+                        "ए आई से जवाब नहीं मिला। इंटरनेट और की चेक कीजिए"
+                    ) { endSession(); listen(Mode.WAKE) }
+                    return@post
+                }
+                aiHistory.add(AiChat.Turn("user", question))
+                aiHistory.add(AiChat.Turn("assistant", result.spoken))
+                while (aiHistory.size > 8) aiHistory.removeAt(0)
+                say(result.display, result.spoken) { continueChat() }
+            }
+        }.start()
     }
 
     // ---------------- Cleanup ----------------
@@ -667,6 +744,7 @@ class LillyService : Service() {
         handler.removeCallbacksAndMessages(null)
         stopVosk()
         floating?.hide()
+        holdAudioFocus(false)
         tone?.release()
         tone = null
         getSystemService(NotificationManager::class.java).cancel(liveId)

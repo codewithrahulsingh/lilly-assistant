@@ -33,6 +33,9 @@ jobs:
           echo "en-in-0.4" > app/src/main/assets/model-en-in/uuid
           du -sh app/src/main/assets/model-en-in
 
+      - name: QA tests (Lilly ki samajh)
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
       - name: Build APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
@@ -47,8 +50,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.4-build${{ github.run_number }}
-          name: Lilly v2.4 (build ${{ github.run_number }})
+          tag_name: v3.0-build${{ github.run_number }}
+          name: Lilly v3.0 (build ${{ github.run_number }})
           body: "Phone par Lilly.apk download karke install karein."
           files: Lilly.apk
           make_latest: true

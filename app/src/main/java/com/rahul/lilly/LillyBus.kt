@@ -10,6 +10,8 @@ object LillyBus {
         fun onRunning(running: Boolean)
         /** Ek baat-cheet poori hui (popup band karne ke liye) */
         fun onSessionEnd() {}
+        /** Baat-cheet lambi chale toh popup khud band na ho */
+        fun keepAlive() {}
     }
 
     var ui: Ui? = null

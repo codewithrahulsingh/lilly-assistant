@@ -105,4 +105,8 @@ class FloatingOrb(private val ctx: Context) : LillyBus.Ui {
     override fun onLevel(level: Float) { orb?.level = level }
     override fun onRunning(running: Boolean) { if (!running) hide() }
     override fun onSessionEnd() = hideSoon()
+    override fun keepAlive() {
+        handler.removeCallbacks(hideRunnable)
+        handler.postDelayed(hideRunnable, 40_000)
+    }
 }

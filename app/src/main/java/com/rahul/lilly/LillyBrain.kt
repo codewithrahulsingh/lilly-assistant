@@ -2,164 +2,139 @@ package com.rahul.lilly
 
 import android.Manifest
 import android.app.KeyguardManager
-import android.telecom.TelecomManager
+import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.telecom.TelecomManager
+import android.view.KeyEvent
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** Lilly ka dimaag: suni hui baat samajh kar jawab aur kaam tay karta hai. */
+/** Lilly ka dimaag: Parser se samjhi hui command par phone me kaam karta hai. */
 class LillyBrain(private val ctx: Context) {
 
-    /** display = screen par likha, spoken = jo Lilly bolegi, action = bolne ke baad kya karna hai */
-    data class Reply(val display: String, val spoken: String, val action: (() -> Unit)? = null)
+    /**
+     * display = screen par likha, spoken = jo Lilly bolegi, action = bolne ke baad ka kaam.
+     * askAi = ye sawal AI se poochhna hai. endChat = baat-cheet yahin khatam.
+     */
+    data class Reply(
+        val display: String,
+        val spoken: String,
+        val action: (() -> Unit)? = null,
+        val askAi: String? = null,
+        val endChat: Boolean = false
+    )
 
     private data class Contact(val name: String, val number: String)
 
-    private val ic = setOf(RegexOption.IGNORE_CASE)
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
+    private val audio get() = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private fun <T> pick(vararg options: T): T = options.random()
 
-    // ---------- Wake word ----------
-
-    private val wakeRegex = Regex(
-        """\b(lilly|lily|lili|lilli|lilie|leely|leli|lilee)\b|लिली|लीली|लिल्ली""", ic
-    )
-    private val leadFiller = Regex("""^[\s,.!?]*(?:(?:hey|hi|hello|ok|okay|हे|हाय)\b)?[\s,.!?]*""", ic)
-
-    fun hasWakeWord(t: String) = wakeRegex.containsMatchIn(t)
-
-    fun stripWakeWord(t: String): String =
-        t.replace(wakeRegex, " ").replace(leadFiller, "").replace(Regex("\\s+"), " ").trim()
-
+    fun hasWakeWord(t: String) = Parser.hasWakeWord(t)
+    fun stripWakeWord(t: String) = Parser.stripWakeWord(t)
     fun looksLikeCommand(t: String) = t.split(" ").count { it.isNotBlank() } >= 2
+    fun roman(t: String) = Parser.roman(t)
+    fun hasAiKey() = !prefs.getString("ai_key", "").isNullOrBlank()
 
-    // ---------- Commands ----------
+    /** Phone locked hai ya nahi */
+    fun isLocked(): Boolean =
+        (ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
 
-    // ---------- Hindi lipi -> Roman (Hinglish) ----------
+    // ---------- Main ----------
 
-    private val hiWords = mapOf(
-        "ओपन" to "open", "खोलो" to "kholo", "खोल" to "khol", "खोलिए" to "kholiye", "खोलें" to "kholein",
-        "दो" to "do", "करो" to "karo", "कर" to "kar", "करना" to "karna", "करें" to "karein", "कीजिए" to "kijiye",
-        "को" to "ko", "से" to "se", "पर" to "par", "पे" to "pe", "की" to "ki", "का" to "ka", "के" to "ke",
-        "कॉल" to "call", "काल" to "call", "फोन" to "phone", "फ़ोन" to "phone", "लगाओ" to "lagao",
-        "लगा" to "laga", "मिलाओ" to "milao", "डायल" to "dial",
-        "टॉर्च" to "torch", "टोर्च" to "torch", "फ्लैशलाइट" to "flashlight", "फ्लैश" to "flash",
-        "जलाओ" to "jalao", "जला" to "jala", "बंद" to "band", "बुझाओ" to "bujhao", "बुझा" to "bujha",
-        "ऑन" to "on", "ऑफ" to "off", "चालू" to "chalu",
-        "टाइम" to "time", "समय" to "samay", "बजे" to "baje", "कितने" to "kitne", "क्या" to "kya",
-        "है" to "hai", "हैं" to "hain", "हुआ" to "hua", "तारीख" to "tarikh", "तारीख़" to "tarikh",
-        "डेट" to "date", "आज" to "aaj", "दिन" to "din",
-        "चलाओ" to "chalao", "चला" to "chala", "स्टार्ट" to "start", "लॉन्च" to "launch", "प्लीज" to "please",
-        "ऐप" to "app", "एप" to "app", "एप्लीकेशन" to "app",
-        "यूट्यूब" to "youtube", "व्हाट्सएप" to "whatsapp", "व्हाट्सऐप" to "whatsapp", "वॉट्सऐप" to "whatsapp",
-        "वॉट्सएप" to "whatsapp", "व्हाट्सप्प" to "whatsapp", "इंस्टाग्राम" to "instagram", "इंस्टा" to "instagram",
-        "कैमरा" to "camera", "सेटिंग" to "settings", "सेटिंग्स" to "settings", "फेसबुक" to "facebook",
-        "गूगल" to "google", "क्रोम" to "chrome", "मैप" to "maps", "मैप्स" to "maps", "गैलरी" to "gallery",
-        "फोटो" to "photos", "फोटोज" to "photos", "स्नैपचैट" to "snapchat", "टेलीग्राम" to "telegram",
-        "स्पॉटिफाई" to "spotify", "कैलकुलेटर" to "calculator", "कैलेंडर" to "calendar", "मैसेज" to "messages",
-        "मैसेजेस" to "messages", "जीमेल" to "gmail", "प्ले" to "play", "स्टोर" to "store", "पेटीएम" to "paytm",
-        "फोनपे" to "phonepe", "घड़ी" to "clock", "क्लॉक" to "clock", "म्यूजिक" to "music", "ट्विटर" to "twitter",
-        "अमेज़न" to "amazon", "अमेजन" to "amazon", "फ्लिपकार्ट" to "flipkart", "नेटफ्लिक्स" to "netflix",
-        "कैसी" to "kaisi", "कैसे" to "kaise", "हो" to "ho", "कौन" to "kaun", "तुम" to "tum",
-        "तुम्हारा" to "tumhara", "नाम" to "naam", "धन्यवाद" to "dhanyavad", "शुक्रिया" to "shukriya",
-        "थैंक" to "thank", "थैंक्स" to "thanks", "थैंक्यू" to "thank you", "यू" to "you", "बाय" to "bye",
-        "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
-    )
+    fun handle(rawText: String, alternatives: List<String>): Reply {
+        // Pehla = sabse pakka; baaki Google ke doosre andaze (galat sune naam pakadne ke liye)
+        val texts = (listOf(rawText) + alternatives)
+            .map { Parser.stripWakeWord(Parser.roman(it)) }
+            .filter { it.isNotBlank() }.distinct()
+        if (texts.isEmpty()) return Reply("Kuch samajh nahi aaya", "कुछ समझ नहीं आया", endChat = true)
+        val cmds = texts.map { Parser.parse(it) }
+        val top = cmds.first()
+        val main = if (top !is Cmd.Unknown) top else cmds.firstOrNull {
+            it is Cmd.Call || it is Cmd.OpenApp || it is Cmd.PlayMusic || it is Cmd.Torch || it is Cmd.Media
+        } ?: top
 
-    /** Suni hui baat ko Roman/Hinglish me badalta hai: "ओपन यूट्यूब" -> "open youtube" */
-    fun roman(t: String): String {
-        if (t.none { it in 'ऀ'..'ॿ' }) return t
-        return t.split(Regex("\\s+")).filter { it.isNotBlank() }.joinToString(" ") { w ->
-            val core = w.trim(',', '.', '?', '!', '।')
-            hiWords[core] ?: if (core.any { it in 'ऀ'..'ॿ' }) transliterate(core) else core
+        return when (main) {
+            is Cmd.Call -> callReply(cmds.filterIsInstance<Cmd.Call>().map { it.target }.distinct())
+            is Cmd.OpenApp -> openApp(cmds.filterIsInstance<Cmd.OpenApp>().map { it.name }.distinct(), main.orMusic)
+            is Cmd.PlayMusic -> playMusic(main.query, main.app)
+            is Cmd.Media -> mediaReply(main.action)
+            is Cmd.Volume -> volumeReply(main.action)
+            is Cmd.Torch -> torchReply(main.on)
+            Cmd.Time -> timeReply()
+            Cmd.Date -> dateReply()
+            Cmd.Battery -> batteryReply()
+            is Cmd.Chat -> chatReply(main.topic)
+            is Cmd.Unknown -> {
+                if (hasAiKey()) Reply("Soch rahi hoon…", "", askAi = texts.first())
+                else Reply(
+                    "Ye mujhe abhi nahi aata. Har baat ka jawab dene ke liye Lilly app me \"AI baat-cheet\" ON kijiye",
+                    "ये मुझे अभी नहीं आता। हर बात का जवाब देने के लिए लिली ऐप में ए आई बातचीत ऑन कीजिए",
+                    endChat = true
+                )
+            }
         }
     }
 
-    private fun isAppAllowed(pkg: String): Boolean {
-        val set = prefs.getStringSet("allowed_apps", null) ?: return true
-        return pkg in set
-    }
+    // ---------- Baat-cheet (offline) ----------
 
-    fun handle(rawText: String, alternatives: List<String>): Reply {
-        val text = roman(rawText)
-        val candidates = (listOf(text) + alternatives.map { stripWakeWord(roman(it)) })
-            .filter { it.isNotBlank() }.distinct()
-        val t = text.lowercase(Locale.ROOT).trim()
-
-        callTarget(candidates)?.let { return callReply(it) }
-        torchCommand(t)?.let { return it }
-
-        if (Regex("""\b(time|samay|baje|bje)\b|टाइम|समय|बजे""", ic).containsMatchIn(t)) return timeReply()
-        if (Regex("""\b(date|tarikh|tareekh|din kya)\b|तारीख|तारीख़|डेट""", ic).containsMatchIn(t)) return dateReply()
-
-        appTarget(t)?.let { return openApp(it) }
-
-        if (Regex("""kaisi ho|kaise ho|how are you|कैसी हो|कैसे हो""", ic).containsMatchIn(t))
-            return pick(
-                Reply("Main badhiya hoon, aap batao", "मैं बढ़िया हूँ, आप बताओ"),
-                Reply("Ekdum mast! Aap kaise ho?", "एकदम मस्त! आप कैसे हो?"),
-                Reply("Achhi hoon, bolo kya karna hai", "अच्छी हूँ, बोलो क्या करना है")
-            )
-        if (Regex("""kaun ho|your name|tumhara naam|कौन हो|नाम क्या""", ic).containsMatchIn(t))
-            return Reply("Main Lilly hoon, aapki assistant", "मैं लिली हूँ, आपकी असिस्टेंट")
-        if (Regex("""thank|shukriya|dhanyavad|धन्यवाद|शुक्रिया|थैंक""", ic).containsMatchIn(t))
-            return pick(
-                Reply("Koi baat nahi 😊", "कोई बात नहीं"),
-                Reply("Aapka swagat hai", "आपका स्वागत है"),
-                Reply("Hamesha haazir hoon", "हमेशा हाज़िर हूँ")
-            )
-        if (Regex("""\b(bye|ruk jao|band karo|so jao|chup)\b|बाय|रुक जाओ|चुप""", ic).containsMatchIn(t))
-            return Reply("Theek hai, zaroorat ho toh 'Lilly' bolna", "ठीक है, ज़रूरत हो तो लिली बोलना")
-
-        return Reply(
-            "Ye abhi mujhe nahi aata, par jaldi seekh lungi",
-            "ये अभी मुझे नहीं आता, पर जल्दी सीख लूँगी"
+    private fun chatReply(topic: String): Reply = when (topic) {
+        "how" -> pick(
+            Reply("Main badhiya hoon, aap batao", "मैं बढ़िया हूँ, आप बताओ"),
+            Reply("Ekdum mast! Aap kaise ho?", "एकदम मस्त! आप कैसे हो?"),
+            Reply("Achhi hoon Rahul, bolo kya karna hai", "अच्छी हूँ राहुल, बोलो क्या करना है")
         )
+        "who" -> Reply("Main Lilly hoon, aapki assistant", "मैं लिली हूँ, आपकी असिस्टेंट")
+        "thanks" -> pick(
+            Reply("Koi baat nahi 😊", "कोई बात नहीं", endChat = true),
+            Reply("Hamesha haazir hoon", "हमेशा हाज़िर हूँ", endChat = true)
+        )
+        "hello" -> Reply("Hello Rahul! Bolo kya karu?", "हेलो राहुल! बोलो क्या करूँ?")
+        "joke" -> pick(
+            Reply(
+                "Teacher: Homework kyun nahi kiya? Student: Sir, light chali gayi thi. Teacher: Toh mombatti jala lete. Student: Machis nahi thi, kyunki pooja ghar me thi aur main nahaya nahi tha!",
+                "टीचर: होमवर्क क्यों नहीं किया? स्टूडेंट: सर, लाइट चली गई थी। टीचर: तो मोमबत्ती जला लेते। स्टूडेंट: माचिस पूजा घर में थी, और मैं नहाया नहीं था!"
+            ),
+            Reply(
+                "Doctor: Aapko aaram ki zaroorat hai. Patient: Par doctor sahab, main toh sarkari office me kaam karta hoon!",
+                "डॉक्टर: आपको आराम की ज़रूरत है। पेशेंट: पर डॉक्टर साहब, मैं तो सरकारी ऑफिस में काम करता हूँ!"
+            )
+        )
+        "help" -> Reply(
+            "Main call laga sakti hoon, apps khol sakti hoon, gaane chala sakti hoon, torch, volume, time aur battery bata sakti hoon",
+            "मैं कॉल लगा सकती हूँ, ऐप्स खोल सकती हूँ, गाने चला सकती हूँ, टॉर्च, वॉल्यूम, टाइम और बैटरी बता सकती हूँ"
+        )
+        else -> Reply("Theek hai, zaroorat ho toh 'Lilly' bolna", "ठीक है, ज़रूरत हो तो लिली बोलना", endChat = true)
     }
 
     // ---------- Call ----------
 
-    private val callWords = "call|phone|fone|fon|dial|कॉल|काल|फोन|फ़ोन"
-    private val doWords = "karo|kar do|kardo|lagao|laga do|kijiye|karna|karein|milao|please|करो|कर दो|लगाओ|लगा दो|कीजिए|करना|मिलाओ|करें"
-    private val callPatterns = listOf(
-        Regex("""^(.+?)\s+(?:ko|को|se|से)\s+(?:$callWords)(?:\s+.*)?$""", ic),
-        Regex("""^(?:please\s+)?(?:$callWords)\s+(?:karo\s+|to\s+)?(.+?)(?:\s+(?:ko|को))?(?:\s+(?:$doWords))?$""", ic),
-        Regex("""^(.+?)\s+(?:$callWords)\s+(?:$doWords)$""", ic)
-    )
-
-    private fun callTarget(candidates: List<String>): String? {
-        for (c in candidates) {
-            for (p in callPatterns) {
-                val m = p.find(c.trim()) ?: continue
-                val name = m.groupValues[1].trim().trim(',', '.', '?', '!')
-                if (name.isNotBlank()) return name
-            }
-        }
-        return null
-    }
-
     private fun granted(p: String) =
         ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
-    private fun callReply(target: String): Reply {
+    private fun callReply(targets: List<String>): Reply {
+        val target = targets.first()
+
         // ---- Lock screen security ----
         val locked = isLocked()
         val lockMode = prefs.getString("lock_mode", "fav") ?: "fav"
         if (locked && lockMode == "off") {
             return Reply(
                 "Security ke liye lock screen par call band hai. Pehle phone unlock kijiye",
-                "सुरक्षा के लिए लॉक स्क्रीन पर कॉल बंद है, पहले फ़ोन अनलॉक कीजिए"
+                "सुरक्षा के लिए लॉक स्क्रीन पर कॉल बंद है, पहले फ़ोन अनलॉक कीजिए", endChat = true
             )
         }
         val favOnly = locked && lockMode == "fav"
@@ -168,25 +143,25 @@ class LillyBrain(private val ctx: Context) {
         if (digits.count { it.isDigit() } >= 5 && target.count { it.isLetter() } == 0) {
             if (favOnly) return Reply(
                 "Lock screen par number bol kar call nahi hoti. Phone unlock kijiye",
-                "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए"
+                "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए", endChat = true
             )
-            return Reply("$digits par call kar rahi hoon", "$digits पर कॉल कर रही हूँ") { startCall(digits) }
+            return Reply("$digits par call kar rahi hoon", "$digits पर कॉल कर रही हूँ", { startCall(digits) }, endChat = true)
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
-            return Reply("Pehle Contacts ki permission dijiye", "पहले कॉन्टैक्ट्स की परमिशन दीजिए") {
-                openAppSettings()
-            }
+            return Reply(
+                "Pehle Contacts ki permission dijiye", "पहले कॉन्टैक्ट्स की परमिशन दीजिए",
+                { openAppSettings() }, endChat = true
+            )
         }
-        val c = findContact(target, favOnly)
+        val c = findContact(targets, favOnly)
             ?: return if (favOnly) Reply(
                 "Lock screen par sirf favourite (⭐) contacts ko call hoti hai. \"$target\" favourite me nahi mila",
-                "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला"
-            ) else Reply("\"$target\" naam ka contact nahi mila", "$target नाम का कॉन्टैक्ट नहीं मिला")
-        return Reply("${c.name} ko call kar rahi hoon", "${c.name} को कॉल कर रही हूँ") { startCall(c.number) }
+                "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला", endChat = true
+            ) else Reply("\"$target\" naam ka contact nahi mila", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true)
+        return Reply("${c.name} ko call kar rahi hoon", "${c.name} को कॉल कर रही हूँ", { startCall(c.number) }, endChat = true)
     }
 
     private fun startCall(number: String) {
-        val uri = Uri.parse("tel:" + Uri.encode(number))
         // TelecomManager se call lock screen par bhi bina app khole lag jaati hai
         if (granted(Manifest.permission.CALL_PHONE)) {
             try {
@@ -195,21 +170,16 @@ class LillyBrain(private val ctx: Context) {
                 return
             } catch (e: Exception) { }
         }
-        launch(Intent(Intent.ACTION_DIAL, uri))
+        launch(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))))
     }
-
-    /** Phone locked hai ya nahi */
-    fun isLocked(): Boolean =
-        (ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
 
     private fun launch(intent: Intent) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try { ctx.startActivity(intent) } catch (e: Exception) { }
     }
 
-    private fun findContact(query: String, favOnly: Boolean): Contact? {
-        val q = normName(query)
-        if (q.isBlank()) return null
+    /** Saare sune gaye naamon me se sabse achha milne wala contact */
+    private fun findContact(queries: List<String>, favOnly: Boolean): Contact? {
         val all = mutableListOf<Contact>()
         val projection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
@@ -230,136 +200,39 @@ class LillyBrain(private val ctx: Context) {
         } catch (e: Exception) {
             return null
         }
-
         var best: Contact? = null
         var bestScore = 0
-        for (c in all) {
-            val n = normName(c.name)
-            if (n.isBlank()) continue
-            val words = n.split(" ")
-            val qWords = q.split(" ")
-            val score = when {
-                n == q -> 100
-                n.startsWith("$q ") || n.startsWith(q) -> 85
-                words.any { it == q } -> 75
-                qWords.all { qw -> words.any { it == qw } } -> 70
-                n.contains(q) -> 55
-                q.length >= 4 && words.any { levenshtein(it, qWords.first()) <= 1 } -> 40
-                skeleton(words.first()) == skeleton(qWords.first()) && skeleton(q).length >= 2 -> 30
-                else -> 0
-            }
-            if (score > bestScore) {
-                bestScore = score
-                best = c
-            }
-        }
-        return best
-    }
-
-    private fun normName(s: String): String {
-        val latin = if (s.any { it in 'ऀ'..'ॿ' }) transliterate(s) else s
-        return latin.lowercase(Locale.ROOT)
-            .replace(Regex("[^a-z0-9 ]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
-
-    /** Vowels hata kar sirf consonants — "Raahul" aur "Rahul" ko match karne ke liye */
-    private fun skeleton(s: String) =
-        s.replace(Regex("[aeiouyh]"), "").replace(Regex("(.)\\1+"), "$1")
-
-    private fun appSkeleton(s: String) = skeleton(s.replace('w', 'v').replace("ph", "f"))
-
-    private fun levenshtein(a: String, b: String): Int {
-        val dp = IntArray(b.length + 1) { it }
-        for (i in 1..a.length) {
-            var prev = dp[0]
-            dp[0] = i
-            for (j in 1..b.length) {
-                val tmp = dp[j]
-                dp[j] = minOf(
-                    dp[j] + 1, dp[j - 1] + 1,
-                    prev + if (a[i - 1] == b[j - 1]) 0 else 1
-                )
-                prev = tmp
-            }
-        }
-        return dp[b.length]
-    }
-
-    // Devanagari naam (jaise "राहुल") ko Roman ("rahul") me badalna
-    private val consonants = mapOf(
-        'क' to "k", 'ख' to "kh", 'ग' to "g", 'घ' to "gh", 'ङ' to "n",
-        'च' to "ch", 'छ' to "chh", 'ज' to "j", 'झ' to "jh", 'ञ' to "n",
-        'ट' to "t", 'ठ' to "th", 'ड' to "d", 'ढ' to "dh", 'ण' to "n",
-        'त' to "t", 'थ' to "th", 'द' to "d", 'ध' to "dh", 'न' to "n",
-        'प' to "p", 'फ' to "f", 'ब' to "b", 'भ' to "bh", 'म' to "m",
-        'य' to "y", 'र' to "r", 'ल' to "l", 'व' to "v", 'श' to "sh",
-        'ष' to "sh", 'स' to "s", 'ह' to "h", 'ळ' to "l"
-    )
-    private val vowels = mapOf(
-        'अ' to "a", 'आ' to "a", 'इ' to "i", 'ई' to "i", 'उ' to "u", 'ऊ' to "u",
-        'ए' to "e", 'ऐ' to "ai", 'ओ' to "o", 'औ' to "au", 'ऋ' to "ri", 'ऑ' to "o"
-    )
-    private val matras = mapOf(
-        'ा' to "a", 'ि' to "i", 'ी' to "i", 'ु' to "u", 'ू' to "u", 'े' to "e",
-        'ै' to "ai", 'ो' to "o", 'ौ' to "au", 'ृ' to "ri", 'ॉ' to "o"
-    )
-
-    private fun transliterate(input: String): String {
-        val s = input.replace("़", "") // nukta hatao
-        val out = StringBuilder()
-        var i = 0
-        while (i < s.length) {
-            val ch = s[i]
-            val next = s.getOrNull(i + 1)
-            val cons = consonants[ch]
-            when {
-                cons != null -> {
-                    out.append(cons)
-                    when {
-                        next == '़' -> { /* nukta: ignore */ }
-                        next != null && matras.containsKey(next) -> { out.append(matras[next]); i++ }
-                        next == '्' -> i++
-                        next == null || !(next in 'ऀ'..'ॿ') -> { /* word end: no 'a' */ }
-                        else -> out.append("a")
-                    }
+        for ((qi, q) in queries.withIndex()) {
+            for (c in all) {
+                // Pehle andaze ko thoda zyada bharosa
+                val score = Parser.contactScore(q, c.name) - qi
+                if (score > bestScore) {
+                    bestScore = score
+                    best = c
                 }
-                vowels.containsKey(ch) -> out.append(vowels[ch])
-                matras.containsKey(ch) -> out.append(matras[ch])
-                ch == '्' -> {}
-                ch == 'ं' || ch == 'ँ' -> out.append("n")
-                ch == 'ः' -> out.append("h")
-                ch == '़' -> {}
-                else -> out.append(ch)
             }
-            i++
         }
-        return out.toString()
+        return if (bestScore >= 30) best else null
     }
 
     // ---------- Torch ----------
 
-    private fun torchCommand(t: String): Reply? {
-        if (!Regex("""torch|flash ?light|flash|टॉर्च|फ्लैश""", ic).containsMatchIn(t)) return null
-        val off = Regex("""\b(off|band|bujha|bujhao|bandh)\b|बंद|बुझा""", ic).containsMatchIn(t)
-        val ok = setTorch(!off)
-        if (!ok) return Reply("Is phone me torch nahi mili", "इस फ़ोन में टॉर्च नहीं मिली")
-        return if (off) Reply("Torch band kar di", "टॉर्च बंद कर दी")
-        else Reply("Torch jala di", "टॉर्च जला दी")
-    }
-
-    private fun setTorch(on: Boolean): Boolean = try {
-        val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val id = cm.cameraIdList.firstOrNull {
-            cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+    private fun torchReply(on: Boolean): Reply {
+        val ok = try {
+            val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val id = cm.cameraIdList.firstOrNull {
+                cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            }
+            if (id == null) false else { cm.setTorchMode(id, on); true }
+        } catch (e: Exception) {
+            false
         }
-        if (id == null) false else { cm.setTorchMode(id, on); true }
-    } catch (e: Exception) {
-        false
+        if (!ok) return Reply("Torch nahi chal payi", "टॉर्च नहीं चल पाई", endChat = true)
+        return if (on) Reply("Torch jala di", "टॉर्च जला दी", endChat = true)
+        else Reply("Torch band kar di", "टॉर्च बंद कर दी", endChat = true)
     }
 
-    // ---------- Time / date ----------
+    // ---------- Time / date / battery ----------
 
     private fun timeReply(): Reply {
         val cal = Calendar.getInstance()
@@ -369,78 +242,155 @@ class LillyBrain(private val ctx: Context) {
         val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
         val display = "Abhi $h:${"%02d".format(m)} $ampm hue hain"
         val spoken = if (m == 0) "अभी $h बजे हैं" else "अभी $h बजकर $m मिनट हुए हैं"
-        return Reply(display, spoken)
+        return Reply(display, spoken, endChat = true)
     }
 
     private fun dateReply(): Reply {
         val now = Date()
         val display = "Aaj " + SimpleDateFormat("d MMMM yyyy, EEEE", Locale.ENGLISH).format(now) + " hai"
         val spoken = "आज " + SimpleDateFormat("d MMMM, EEEE", Locale("hi", "IN")).format(now) + " है"
-        return Reply(display, spoken)
+        return Reply(display, spoken, endChat = true)
+    }
+
+    private fun batteryReply(): Reply {
+        val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val charging = bm.isCharging
+        val extra = if (charging) ", charge ho rahi hai" else ""
+        val extraHi = if (charging) ", चार्ज हो रही है" else ""
+        return Reply("Battery $pct% hai$extra", "बैटरी $pct प्रतिशत है$extraHi", endChat = true)
+    }
+
+    // ---------- Gaane / Spotify ----------
+
+    private val spotify = "com.spotify.music"
+    private val youtube = "com.google.android.youtube"
+
+    private fun installed(pkg: String) = ctx.packageManager.getLaunchIntentForPackage(pkg) != null
+
+    private fun mediaKey(code: Int) {
+        try {
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        } catch (e: Exception) { }
+    }
+
+    private fun mediaReply(action: String): Reply = when (action) {
+        "pause" -> Reply("Gaana rok diya", "गाना रोक दिया", { mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }, endChat = true)
+        "next" -> Reply("Agla gaana", "अगला गाना", { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }, endChat = true)
+        "previous" -> Reply("Pichla gaana", "पिछला गाना", {
+            mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        }, endChat = true)
+        else -> Reply("Gaana chala rahi hoon", "गाना चला रही हूँ", { mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY) }, endChat = true)
+    }
+
+    private fun playMusic(query: String, app: String): Reply {
+        if (query.isBlank()) return mediaReply("resume")
+        val shown = query.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
+
+        if (app == "youtube" && installed(youtube)) {
+            val i = Intent(Intent.ACTION_SEARCH).setPackage(youtube).putExtra("query", query)
+            return Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
+                openExternal(i, "YouTube")
+            }, endChat = true)
+        }
+        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(SearchManager.QUERY, query)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+        if (installed(spotify)) {
+            i.setPackage(spotify)
+            return Reply("Spotify par $shown chala rahi hoon", "स्पॉटिफाई पर $shown चला रही हूँ", {
+                openExternal(i, "Spotify")
+            }, endChat = true)
+        }
+        if (i.resolveActivity(ctx.packageManager) != null) {
+            return Reply("$shown chala rahi hoon", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
+        }
+        if (installed(youtube)) {
+            val y = Intent(Intent.ACTION_SEARCH).setPackage(youtube).putExtra("query", query)
+            return Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
+                openExternal(y, "YouTube")
+            }, endChat = true)
+        }
+        return Reply("Gaana chalane ke liye Spotify install kijiye", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true)
+    }
+
+    private fun volumeReply(action: String): Reply {
+        val s = AudioManager.STREAM_MUSIC
+        val max = audio.getStreamMaxVolume(s)
+        val step = (max / 5).coerceAtLeast(1)
+        val cur = audio.getStreamVolume(s)
+        val target = when (action) {
+            "up" -> (cur + step).coerceAtMost(max)
+            "down" -> (cur - step).coerceAtLeast(0)
+            "max" -> max
+            else -> 0
+        }
+        try { audio.setStreamVolume(s, target, AudioManager.FLAG_SHOW_UI) } catch (e: Exception) { }
+        return when (action) {
+            "up" -> Reply("Awaaz badha di", "आवाज़ बढ़ा दी", endChat = true)
+            "down" -> Reply("Awaaz kam kar di", "आवाज़ कम कर दी", endChat = true)
+            "max" -> Reply("Awaaz full kar di", "आवाज़ फुल कर दी", endChat = true)
+            else -> Reply("Mute kar diya", "म्यूट कर दिया", endChat = true)
+        }
     }
 
     // ---------- Apps ----------
 
-    private val openPatterns = listOf(
-        Regex("""^(?:please\s+)?(?:open|start|launch|kholo|chalao)\s+(.+?)(?:\s+(?:karo|kar do|kardo|kijiye|please))?$""", ic),
-        Regex("""^(.+?)\s+(?:kholo|khol do|kholdo|open karo|open kar do|open|chalao|chala do|start karo|खोलो|खोल दो|खोलिए|खोलें|चलाओ|चला दो|ओपन करो|ओपन कर दो|open करो|open कर दो|ओपन)$""", ic)
-    )
-    private val appAliases = mapOf(
-        "यूट्यूब" to "youtube", "you tube" to "youtube",
-        "व्हाट्सएप" to "whatsapp", "व्हाट्सऐप" to "whatsapp", "whats app" to "whatsapp",
-        "इंस्टाग्राम" to "instagram", "insta" to "instagram",
-        "कैमरा" to "camera", "सेटिंग" to "settings", "सेटिंग्स" to "settings", "setting" to "settings",
-        "फेसबुक" to "facebook", "गूगल" to "google", "मैप" to "maps", "map" to "maps",
-        "गैलरी" to "gallery", "photos" to "photos", "क्रोम" to "chrome",
-        "phone pe" to "phonepe", "फोनपे" to "phonepe", "g pay" to "gpay", "google pay" to "gpay", "गूगल पे" to "gpay",
-        "पेटीएम" to "paytm", "स्नैपचैट" to "snapchat", "टेलीग्राम" to "telegram", "स्पॉटिफाई" to "spotify",
-        "कैलकुलेटर" to "calculator", "घड़ी" to "clock", "कैलेंडर" to "calendar", "मैसेज" to "messages",
-        "प्ले स्टोर" to "play store", "जीमेल" to "gmail", "फोटो" to "photos", "फोटोज" to "photos"
-    )
-
-    private fun appTarget(t: String): String? {
-        for (p in openPatterns) {
-            val m = p.find(t) ?: continue
-            var name = m.groupValues[1].trim().lowercase(Locale.ROOT)
-                .removePrefix("the ").removePrefix("my ")
-                .removeSuffix(" ko").removeSuffix(" application").removeSuffix(" app").removeSuffix(" ऐप").trim()
-            name = appAliases[name] ?: name
-            if (name.isNotBlank()) return name
-        }
-        return null
+    private fun isAppAllowed(pkg: String): Boolean {
+        val set = prefs.getStringSet("allowed_apps", null) ?: return true
+        return pkg in set
     }
 
-    private fun openApp(name: String): Reply {
+    private fun openApp(names: List<String>, orMusic: Boolean): Reply {
         val pm = ctx.packageManager
-        val display = name.replaceFirstChar { it.uppercase() }
-        val special: Intent? = when (name) {
+        val first = Parser.appNames(names.first()).first()
+        val special: Intent? = when (first) {
             "camera" -> Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
             "settings" -> Intent(Settings.ACTION_SETTINGS)
             else -> null
         }
-        val intent = special ?: run {
-            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            val apps = pm.queryIntentActivities(launcher, 0)
-            // Hindi me suna gaya naam ("इंस्टाग्राम") bhi Roman label ("Instagram") se milao
-            val target = normName(name).replace(" ", "")
-            val labels = apps.map { it to normName(it.loadLabel(pm).toString()).replace(" ", "") }
-            val sk = appSkeleton(target)
-            val match = if (target.isBlank()) null else (
-                labels.firstOrNull { it.second == target }
-                    ?: labels.firstOrNull { it.second.startsWith(target) }
-                    ?: labels.firstOrNull { it.second.contains(target) }
-                    ?: (if (sk.length >= 3) labels.firstOrNull { appSkeleton(it.second) == sk } else null)
-                )?.first
-            if (match != null && !isAppAllowed(match.activityInfo.packageName)) {
-                return Reply(
-                    "$display kholne ki permission nahi di hai. Lilly app me allow kijiye",
-                    "$display खोलने की परमिशन नहीं दी है"
-                )
-            }
-            match?.let { pm.getLaunchIntentForPackage(it.activityInfo.packageName) }
-        } ?: return Reply("\"$display\" app nahi mila", "$display ऐप नहीं मिला")
+        if (special != null) {
+            val label = first.replaceFirstChar { it.uppercase() }
+            return Reply("$label khol rahi hoon", "$label खोल रही हूँ", { openExternal(special, label) }, endChat = true)
+        }
 
-        return Reply("$display khol rahi hoon", "$display खोल रही हूँ") { openExternal(intent, display) }
+        // Har sune gaye naam ko har app ke label se milao, sabse achha match chuno
+        val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .filter { it.activityInfo.packageName != ctx.packageName }
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+        var bestPkg: String? = null
+        var bestLabel = ""
+        var bestScore = 0
+        for ((qi, raw) in names.withIndex()) {
+            for (variant in Parser.appNames(raw)) {
+                for ((pkg, label) in apps) {
+                    // barabar score par chhota naam jeete ("YouTube" > "YouTube Music")
+                    val score = Parser.appScore(variant, label) * 100 - qi * 150 - label.length
+                    if (Parser.appScore(variant, label) >= 50 && score > bestScore) {
+                        bestScore = score
+                        bestPkg = pkg
+                        bestLabel = label
+                    }
+                }
+            }
+        }
+
+        val pkg = bestPkg
+        if (pkg == null) {
+            if (orMusic) return playMusic(names.first(), "")
+            val said = names.first().replaceFirstChar { it.uppercase() }
+            return Reply("\"$said\" naam ka app nahi mila", "$said नाम का ऐप नहीं मिला", endChat = true)
+        }
+        if (!isAppAllowed(pkg)) {
+            return Reply(
+                "$bestLabel kholne ki permission nahi di hai. Lilly app me allow kijiye",
+                "$bestLabel खोलने की परमिशन नहीं दी है", endChat = true
+            )
+        }
+        val intent = pm.getLaunchIntentForPackage(pkg)
+            ?: return Reply("$bestLabel nahi khul paya", "$bestLabel नहीं खुल पाया", endChat = true)
+        return Reply("$bestLabel khol rahi hoon", "$bestLabel खोल रही हूँ", { openExternal(intent, bestLabel) }, endChat = true)
     }
 
     /**

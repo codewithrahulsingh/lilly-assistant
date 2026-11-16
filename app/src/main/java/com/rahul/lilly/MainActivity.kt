@@ -35,6 +35,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var langValue: TextView
     private lateinit var allowedValue: TextView
     private lateinit var voiceValue: TextView
+    private lateinit var aiValue: TextView
+    private lateinit var lockPopupValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -186,6 +188,10 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r6 = row(col)
         allowedValue = card(r6, "✅", "Voice se khulne wale apps") { chooseApps() }
+        aiValue = card(r6, "🤖", "AI baat-cheet") { aiSetup() }
+
+        val r7 = row(col)
+        lockPopupValue = card(r7, "🔓", "Lock screen par orb") { lockPopupSetup() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -200,6 +206,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun refreshCards() {
+        aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — har baat ka jawab chahiye toh ON karein" else "ON ✓"
+        lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap karke allow karein"
         val allowed = prefs.getStringSet("allowed_apps", null)
         allowedValue.text = if (allowed == null) "Sab apps allowed" else "${allowed.size} apps allowed"
         voiceValue.text =
@@ -241,6 +249,72 @@ class MainActivity : Activity(), LillyBus.Ui {
                 prefs.edit().putString("lock_mode", lockModes[which]).apply()
                 refreshCards()
                 d.dismiss()
+            }
+            .show()
+    }
+
+    private fun canFullScreen(): Boolean =
+        Build.VERSION.SDK_INT < 34 ||
+            getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent()
+
+    private fun lockPopupSetup() {
+        if (canFullScreen()) {
+            AlertDialog.Builder(this)
+                .setTitle("Lock screen par orb")
+                .setMessage(
+                    "Ye permission mil chuki hai. Agar phir bhi lock screen par orb na aaye toh " +
+                        "\"Har screen par orb + apps\" wali permission bhi ON kijiye."
+                )
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Lock screen par orb")
+            .setMessage("Agli screen par Lilly ke liye \"Full screen notifications\" ALLOW kar dijiye. Isse phone lock hone par bhi orb apne aap khulega.")
+            .setPositiveButton("Kholo") { _, _ ->
+                val ok = Build.VERSION.SDK_INT >= 34 && tryStart(
+                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName"))
+                )
+                if (!ok) tryStart(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                )
+            }
+            .setNegativeButton("Rehne do", null).show()
+    }
+
+    /** Normal baat-cheet ke liye AI key (Gemini free ya Anthropic) */
+    private fun aiSetup() {
+        val input = android.widget.EditText(this).apply {
+            hint = "Yahan AI key paste karein"
+            setSingleLine(true)
+            setText(prefs.getString("ai_key", ""))
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val box = android.widget.FrameLayout(this).apply {
+            setPadding(dp(22), dp(4), dp(22), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("🤖 AI baat-cheet")
+            .setMessage(
+                "Isse Lilly aapki kisi bhi baat ka jawab de sakti hai (sawal, gappe, jaankari).\n\n" +
+                    "Iske liye ek AI key chahiye:\n" +
+                    "• Google Gemini — free: \"Key banao\" dabaiye, Google se login karke \"Create API key\" kijiye, key copy karke yahan paste kijiye\n" +
+                    "• Ya Anthropic (Claude) key, jo sk-ant- se shuru hoti hai\n\n" +
+                    "Dhyan rahe: ON karne par aapka poochha gaya sawal internet se us AI company ko jaata hai. " +
+                    "Call, apps, gaane jaise commands phone ke andar hi rehte hain."
+            )
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                prefs.edit().putString("ai_key", input.text.toString().trim()).apply()
+                refreshCards()
+            }
+            .setNeutralButton("Key banao") { _, _ ->
+                tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey")))
+            }
+            .setNegativeButton("OFF karo") { _, _ ->
+                prefs.edit().remove("ai_key").apply()
+                refreshCards()
             }
             .show()
     }
@@ -381,7 +455,12 @@ class MainActivity : Activity(), LillyBus.Ui {
                 arrayOf(
                     "📞  \"Rahul ko call karo\"",
                     "📞  \"Call Mummy\"",
-                    "📱  \"YouTube kholo\" / \"WhatsApp open karo\"",
+                    "📱  \"Open YouTube\" / \"WhatsApp kholo\"",
+                    "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
+                    "🎵  \"YouTube par Kesariya chalao\"",
+                    "⏯  \"Gaana band karo\" / \"Next song\" / \"Pichla gaana\"",
+                    "🔊  \"Volume badhao\" / \"Awaaz kam karo\"",
+                    "🔋  \"Battery kitni hai\"",
                     "📷  \"Camera kholo\"",
                     "🔦  \"Torch jalao\" / \"Torch band karo\"",
                     "🕒  \"Kitne baje hain\"",
@@ -397,7 +476,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setTitle("🛡 Security")
             .setMessage(
                 "• \"Hey Lilly\" phone ke andar hi (offline) pehchana jaata hai\n" +
-                    "• Lilly ke paas Internet permission nahi hai\n" +
+                    "• Internet sirf \"AI baat-cheet\" ke liye use hota hai, aur tabhi jab aap use ON karein\n" +
                     "• Lock screen par call sirf aapki chuni hui list ko\n" +
                     "• Lock screen se app kholne par pehle unlock maanga jaata hai\n" +
                     "• App data ka backup band hai"

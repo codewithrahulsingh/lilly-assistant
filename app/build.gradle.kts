@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "2.4"
+        versionCode = 9
+        versionName = "3.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -24,4 +24,5 @@ dependencies {
     // Offline wake word ("Lilly") — awaaz phone se bahar nahi jaati, beep nahi aati
     implementation("net.java.dev.jna:jna:5.13.0@aar")
     implementation("com.alphacephei:vosk-android:0.3.47@aar")
+    testImplementation("junit:junit:4.13.2")
 }

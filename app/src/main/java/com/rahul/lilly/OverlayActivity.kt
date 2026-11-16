@@ -2,6 +2,7 @@ package com.rahul.lilly
 
 import android.app.Activity
 import android.app.KeyguardManager
+import android.app.NotificationManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -111,6 +112,8 @@ class OverlayActivity : Activity(), LillyBus.Ui {
         heard.text = LillyBus.lastHeard
         status.text = LillyBus.lastStatus
         orb.state = LillyBus.lastOrb
+        // Popup khul gaya, ab uska notification nahi chahiye
+        getSystemService(NotificationManager::class.java).cancel(9)
         // Kuch na ho toh 25 sec me khud band
         handler.postDelayed({ finish() }, 25_000)
     }
@@ -127,6 +130,12 @@ class OverlayActivity : Activity(), LillyBus.Ui {
     override fun onOrb(state: OrbView.State) = runOnUiThread { orb.state = state }
     override fun onLevel(level: Float) { orb.level = level }
     override fun onRunning(running: Boolean) { if (!running) runOnUiThread { finish() } }
+    override fun keepAlive() {
+        runOnUiThread {
+            handler.removeCallbacksAndMessages(null)
+            handler.postDelayed({ finish() }, 40_000)
+        }
+    }
     override fun onSessionEnd() {
         runOnUiThread { handler.postDelayed({ finish() }, 900) }
     }

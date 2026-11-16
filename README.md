@@ -45,3 +45,9 @@ Phone restart hone ke baad Lilly app ek baar kholna padta hai (Android ka niyam)
 - Koi restricted permission (overlay/accessibility) nahi
 - App data ka backup off
 - Lock screen par default sirf favourite contacts ko call
+
+## v3.0
+- **Gaane:** "Play Kesariya", "Arijit Singh ke gaane chalao", "YouTube par Kesariya chalao", "gaana band karo", "next song", "volume badhao"
+- **AI baat-cheet (optional):** app me AI key (Gemini free / Anthropic) daalne par Lilly kisi bhi baat ka jawab deti hai aur bina dobara "Lilly" bole baat aage chalti hai
+- **Behtar app matching:** Google ke saare andaze + milti-julti spelling se app dhoondhti hai
+- **QA:** `app/src/test/.../ParserTest.kt` — 70+ commands ke tests har build par chalte hain
