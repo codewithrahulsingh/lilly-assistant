@@ -259,6 +259,7 @@ class LillyService : Service() {
             LillyBus.running = true
             getSystemService(NotificationManager::class.java).cancel(START_NOTIF_ID)
             loadWakeModel()
+            prefetchVoice()
             listen(Mode.WAKE)
             scheduleWatchdog()
         }
@@ -403,7 +404,15 @@ class LillyService : Service() {
         ttsReady = true
     }
 
+    private val realVoice by lazy { RealVoice(this) }
+
+    private fun prefetchVoice() = realVoice.prefetch(
+        "Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ",
+        "I didn't hear anything", "कुछ सुनाई नहीं दिया"
+    )
+
     private fun voiceLabel(): String {
+        if (realVoice.enabled()) return realVoice.label()
         val v = tts?.voice ?: return "default"
         val idx = voiceList.indexOfFirst { it.name == v.name } + 1
         val kind = if (v.isNetworkConnectionRequired) "natural (online)" else "offline"
@@ -411,6 +420,14 @@ class LillyService : Service() {
     }
 
     private fun nextVoice() {
+        if (realVoice.enabled()) {
+            val all = RealVoice.VOICES
+            val cur = all.indexOfFirst { it.name == realVoice.voice }
+            prefs.edit().putString("real_voice", all[(cur + 1) % all.size].name).apply()
+            testVoice()
+            prefetchVoice()
+            return
+        }
         val t = tts ?: return
         if (voiceList.isEmpty()) {
             sayBi("No Hindi voice found on this phone. Please download Google voice data in Settings", "हिंदी आवाज़ नहीं मिली")
@@ -477,18 +494,29 @@ class LillyService : Service() {
             }, 250)
             return
         }
-        val t = tts
-        if (!ttsReady || t == null) {
-            handler.postDelayed({
-                if (mode == Mode.SPEAKING) mode = Mode.WAKE
-                if (then != null) then.invoke() else restartLater(200)
-            }, 1200)
-            return
-        }
         afterSpeak = then
         val id = "lilly-" + System.nanoTime()
         currentUtterance = id
         handler.removeCallbacks(speakTimeout)
+        if (realVoice.enabled()) {
+            // Asli insaan jaisi awaaz; na mile toh phone ki awaaz se
+            handler.postDelayed(speakTimeout, 6000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
+            realVoice.speak(spoken,
+                onDone = { finishSpeaking(id) },
+                onFallback = { if (currentUtterance == id) speakDevice(spoken, id) })
+            return
+        }
+        speakDevice(spoken, id)
+    }
+
+    /** Phone ki apni (Google TTS) awaaz */
+    private fun speakDevice(spoken: String, id: String) {
+        val t = tts
+        handler.removeCallbacks(speakTimeout)
+        if (!ttsReady || t == null) {
+            handler.postDelayed({ finishSpeaking(id) }, 1200)
+            return
+        }
         val result = t.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, id)
         if (result != TextToSpeech.SUCCESS) {
             finishSpeaking(id)
@@ -880,6 +908,7 @@ class LillyService : Service() {
         try { recognizer?.cancel() } catch (e: Exception) { }
         recognizer?.destroy()
         recognizer = null
+        realVoice.stop()
         tts?.stop()
         tts?.shutdown()
         tts = null

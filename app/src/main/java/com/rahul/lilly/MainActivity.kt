@@ -38,6 +38,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var aiValue: TextView
     private lateinit var lockPopupValue: TextView
     private lateinit var learnedValue: TextView
+    private lateinit var realValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -195,6 +196,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         lockPopupValue = card(r7, "🔓", "Orb on lock screen") { lockPopupSetup() }
         learnedValue = card(r7, "🧠", "What Lilly learned") { showLearned() }
 
+        val r8 = row(col)
+        realValue = card(r8, "🎤", "Real human voice") { chooseRealVoice() }
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -210,6 +214,13 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun refreshCards() {
         aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — turn on to get answers to anything" else "ON ✓"
         lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap to allow"
+        val key = prefs.getString("ai_key", "") ?: ""
+        val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
+        realValue.text = when {
+            key.isBlank() || key.startsWith("sk-ant-") -> "Needs a free Gemini key — tap"
+            rv == RealVoice.OFF -> "OFF — using phone voice"
+            else -> "ON ✓ $rv"
+        }
         val learnedCount = learner().items().size
         learnedValue.text = if (learnedCount == 0) "Nothing yet — tap to see how" else "$learnedCount things learned"
         val allowed = prefs.getStringSet("allowed_apps", null)
@@ -469,6 +480,42 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun chooseRealVoice() {
+        val key = prefs.getString("ai_key", "") ?: ""
+        if (key.isBlank() || key.startsWith("sk-ant-")) {
+            AlertDialog.Builder(this)
+                .setTitle("🎤 Real human voice")
+                .setMessage(
+                    "Lilly can speak in a natural, human-like woman's voice using Google Gemini — " +
+                        "the same free Gemini key used for AI chat.\n\nAdd your Gemini key in \"AI chat\" first."
+                )
+                .setPositiveButton("Add key") { _, _ -> aiSetup() }
+                .setNegativeButton("Not now", null).show()
+            return
+        }
+        val codes = listOf(RealVoice.OFF) + RealVoice.VOICES.map { it.name }
+        val labels = listOf("Off — use the phone's voice") + RealVoice.VOICES.map { "${it.name} — ${it.about}" }
+        val cur = codes.indexOf(prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT)
+        AlertDialog.Builder(this)
+            .setTitle("Choose Lilly's voice (tap to hear)")
+            .setSingleChoiceItems(labels.toTypedArray(), cur) { _, which ->
+                prefs.edit().putString("real_voice", codes[which]).apply()
+                refreshCards()
+                sendToEngine(LillyService.ACTION_TEST_VOICE)
+            }
+            .setPositiveButton("Done", null)
+            .setNeutralButton("About") { _, _ ->
+                AlertDialog.Builder(this).setTitle("About the real voice").setMessage(
+                    "• Made by Google Gemini, so it needs internet the first time a sentence is spoken\n" +
+                        "• Every sentence is saved on the phone, so repeated lines (like \"Yes Rahul, how can I help?\") play instantly, even offline\n" +
+                        "• New sentences (like AI answers) can take 1–3 seconds\n" +
+                        "• If the internet is slow or the free limit runs out, Lilly uses the phone's voice for a while, so she never goes silent\n" +
+                        "• The text Lilly speaks is sent to Google to make the voice"
+                ).setPositiveButton("OK", null).show()
+            }
+            .show()
+    }
+
     private fun learner() = Learner(
         load = { prefs.getString("learned", null) },
         save = { prefs.edit().putString("learned", it).apply() }
@@ -555,7 +602,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setMessage(
                 "• \"Hey Lilly\" is recognised on the phone itself (offline)\n" +
                     "• Your commands are turned into text by your phone's Google speech service\n" +
-                    "• Questions go to an AI company only if you turn on \"AI chat\"; playing a song on YouTube looks it up online\n" +
+                    "• Questions go to an AI company only if you turn on \"AI chat\"; with a Gemini key, the real voice sends what Lilly says to Google; playing a song on YouTube looks it up online\n" +
                     "• On the lock screen, calls go only to the list you chose\n" +
                     "• Opening an app from the lock screen asks you to unlock first\n" +
                     "• App data backup is off"
