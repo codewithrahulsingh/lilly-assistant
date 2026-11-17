@@ -62,7 +62,7 @@ class LillyBrain(private val ctx: Context) {
         val texts = (listOf(rawText) + alternatives)
             .map { Parser.stripWakeWord(Parser.roman(it)) }
             .filter { it.isNotBlank() }.distinct()
-        if (texts.isEmpty()) return Reply("Kuch samajh nahi aaya", "कुछ समझ नहीं आया", endChat = true)
+        if (texts.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true)
         val cmds = texts.map { Parser.parse(it) }
         val top = cmds.first()
         val main = if (top !is Cmd.Unknown) top else cmds.firstOrNull {
@@ -81,9 +81,9 @@ class LillyBrain(private val ctx: Context) {
             Cmd.Battery -> batteryReply()
             is Cmd.Chat -> chatReply(main.topic)
             is Cmd.Unknown -> {
-                if (hasAiKey()) Reply("Soch rahi hoon…", "", askAi = texts.first())
+                if (hasAiKey()) Reply("Thinking…", "", askAi = texts.first())
                 else Reply(
-                    "Ye mujhe abhi nahi aata. Har baat ka jawab dene ke liye Lilly app me \"AI baat-cheet\" ON kijiye",
+                    "I can't do that yet. Turn on AI chat in the Lilly app and I can answer anything",
                     "ये मुझे अभी नहीं आता। हर बात का जवाब देने के लिए लिली ऐप में ए आई बातचीत ऑन कीजिए",
                     endChat = true
                 )
@@ -95,31 +95,31 @@ class LillyBrain(private val ctx: Context) {
 
     private fun chatReply(topic: String): Reply = when (topic) {
         "how" -> pick(
-            Reply("Main badhiya hoon, aap batao", "मैं बढ़िया हूँ, आप बताओ"),
-            Reply("Ekdum mast! Aap kaise ho?", "एकदम मस्त! आप कैसे हो?"),
-            Reply("Achhi hoon Rahul, bolo kya karna hai", "अच्छी हूँ राहुल, बोलो क्या करना है")
+            Reply("I'm doing great, how about you?", "मैं बढ़िया हूँ, आप बताओ"),
+            Reply("Feeling awesome! How are you?", "एकदम मस्त! आप कैसे हो?"),
+            Reply("I'm good, Rahul. What can I do for you?", "अच्छी हूँ राहुल, बोलो क्या करना है")
         )
-        "who" -> Reply("Main Lilly hoon, aapki assistant", "मैं लिली हूँ, आपकी असिस्टेंट")
+        "who" -> Reply("I'm Lilly, your assistant", "मैं लिली हूँ, आपकी असिस्टेंट")
         "thanks" -> pick(
-            Reply("Koi baat nahi 😊", "कोई बात नहीं", endChat = true),
-            Reply("Hamesha haazir hoon", "हमेशा हाज़िर हूँ", endChat = true)
+            Reply("You're welcome!", "कोई बात नहीं", endChat = true),
+            Reply("Always here for you", "हमेशा हाज़िर हूँ", endChat = true)
         )
-        "hello" -> Reply("Hello Rahul! Bolo kya karu?", "हेलो राहुल! बोलो क्या करूँ?")
+        "hello" -> Reply("Hello Rahul! What can I do for you?", "हेलो राहुल! बोलो क्या करूँ?")
         "joke" -> pick(
             Reply(
-                "Teacher: Homework kyun nahi kiya? Student: Sir, light chali gayi thi. Teacher: Toh mombatti jala lete. Student: Machis nahi thi, kyunki pooja ghar me thi aur main nahaya nahi tha!",
+                "Teacher: Why didn't you do your homework? Student: Sir, the power went out. Teacher: You could have lit a candle. Student: The matches were in the prayer room, and I hadn't taken a bath!",
                 "टीचर: होमवर्क क्यों नहीं किया? स्टूडेंट: सर, लाइट चली गई थी। टीचर: तो मोमबत्ती जला लेते। स्टूडेंट: माचिस पूजा घर में थी, और मैं नहाया नहीं था!"
             ),
             Reply(
-                "Doctor: Aapko aaram ki zaroorat hai. Patient: Par doctor sahab, main toh sarkari office me kaam karta hoon!",
+                "Doctor: You need some rest. Patient: But doctor, I already work in a government office!",
                 "डॉक्टर: आपको आराम की ज़रूरत है। पेशेंट: पर डॉक्टर साहब, मैं तो सरकारी ऑफिस में काम करता हूँ!"
             )
         )
         "help" -> Reply(
-            "Main call laga sakti hoon, apps khol sakti hoon, gaane chala sakti hoon, torch, volume, time aur battery bata sakti hoon",
+            "I can make calls, open apps, play songs, control the torch and volume, and tell you the time and battery",
             "मैं कॉल लगा सकती हूँ, ऐप्स खोल सकती हूँ, गाने चला सकती हूँ, टॉर्च, वॉल्यूम, टाइम और बैटरी बता सकती हूँ"
         )
-        else -> Reply("Theek hai, zaroorat ho toh 'Lilly' bolna", "ठीक है, ज़रूरत हो तो लिली बोलना", endChat = true)
+        else -> Reply("Okay, just say Lilly when you need me", "ठीक है, ज़रूरत हो तो लिली बोलना", endChat = true)
     }
 
     // ---------- Call ----------
@@ -135,7 +135,7 @@ class LillyBrain(private val ctx: Context) {
         val lockMode = prefs.getString("lock_mode", "fav") ?: "fav"
         if (locked && lockMode == "off") {
             return Reply(
-                "Security ke liye lock screen par call band hai. Pehle phone unlock kijiye",
+                "For security, calls are off on the lock screen. Please unlock your phone first",
                 "सुरक्षा के लिए लॉक स्क्रीन पर कॉल बंद है, पहले फ़ोन अनलॉक कीजिए", endChat = true
             )
         }
@@ -144,23 +144,23 @@ class LillyBrain(private val ctx: Context) {
         val digits = target.filter { it.isDigit() || it == '+' }
         if (digits.count { it.isDigit() } >= 5 && target.count { it.isLetter() } == 0) {
             if (favOnly) return Reply(
-                "Lock screen par number bol kar call nahi hoti. Phone unlock kijiye",
+                "I can't dial a spoken number on the lock screen. Please unlock your phone",
                 "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए", endChat = true
             )
-            return Reply("$digits par call kar rahi hoon", "$digits पर कॉल कर रही हूँ", { startCall(digits) }, endChat = true)
+            return Reply("Calling $digits", "$digits पर कॉल कर रही हूँ", { startCall(digits) }, endChat = true)
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
             return Reply(
-                "Pehle Contacts ki permission dijiye", "पहले कॉन्टैक्ट्स की परमिशन दीजिए",
+                "Please allow the Contacts permission first", "पहले कॉन्टैक्ट्स की परमिशन दीजिए",
                 { openAppSettings() }, endChat = true
             )
         }
         val c = findContact(targets, favOnly)
             ?: return if (favOnly) Reply(
-                "Lock screen par sirf favourite (⭐) contacts ko call hoti hai. \"$target\" favourite me nahi mila",
+                "On the lock screen I can only call your favourite contacts. $target is not in favourites",
                 "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला", endChat = true
-            ) else Reply("\"$target\" naam ka contact nahi mila", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true)
-        return Reply("${c.name} ko call kar rahi hoon", "${c.name} को कॉल कर रही हूँ", { startCall(c.number) }, endChat = true)
+            ) else Reply("I couldn't find a contact named $target", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true)
+        return Reply("Calling ${c.name}", "${c.name} को कॉल कर रही हूँ", { startCall(c.number) }, endChat = true)
     }
 
     private fun startCall(number: String) {
@@ -229,9 +229,9 @@ class LillyBrain(private val ctx: Context) {
         } catch (e: Exception) {
             false
         }
-        if (!ok) return Reply("Torch nahi chal payi", "टॉर्च नहीं चल पाई", endChat = true)
-        return if (on) Reply("Torch jala di", "टॉर्च जला दी", endChat = true)
-        else Reply("Torch band kar di", "टॉर्च बंद कर दी", endChat = true)
+        if (!ok) return Reply("I couldn't control the torch", "टॉर्च नहीं चल पाई", endChat = true)
+        return if (on) Reply("Torch is on", "टॉर्च जला दी", endChat = true)
+        else Reply("Torch is off", "टॉर्च बंद कर दी", endChat = true)
     }
 
     // ---------- Time / date / battery ----------
@@ -242,14 +242,14 @@ class LillyBrain(private val ctx: Context) {
         if (h == 0) h = 12
         val m = cal.get(Calendar.MINUTE)
         val ampm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "AM" else "PM"
-        val display = "Abhi $h:${"%02d".format(m)} $ampm hue hain"
+        val display = "It's $h:${"%02d".format(m)} $ampm"
         val spoken = if (m == 0) "अभी $h बजे हैं" else "अभी $h बजकर $m मिनट हुए हैं"
         return Reply(display, spoken, endChat = true)
     }
 
     private fun dateReply(): Reply {
         val now = Date()
-        val display = "Aaj " + SimpleDateFormat("d MMMM yyyy, EEEE", Locale.ENGLISH).format(now) + " hai"
+        val display = "Today is " + SimpleDateFormat("EEEE, d MMMM yyyy", Locale.ENGLISH).format(now)
         val spoken = "आज " + SimpleDateFormat("d MMMM, EEEE", Locale("hi", "IN")).format(now) + " है"
         return Reply(display, spoken, endChat = true)
     }
@@ -258,9 +258,9 @@ class LillyBrain(private val ctx: Context) {
         val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val charging = bm.isCharging
-        val extra = if (charging) ", charge ho rahi hai" else ""
+        val extra = if (charging) " and charging" else ""
         val extraHi = if (charging) ", चार्ज हो रही है" else ""
-        return Reply("Battery $pct% hai$extra", "बैटरी $pct प्रतिशत है$extraHi", endChat = true)
+        return Reply("Battery is at $pct percent$extra", "बैटरी $pct प्रतिशत है$extraHi", endChat = true)
     }
 
     // ---------- Gaane / Spotify ----------
@@ -279,12 +279,12 @@ class LillyBrain(private val ctx: Context) {
     }
 
     private fun mediaReply(action: String): Reply = when (action) {
-        "pause" -> Reply("Gaana rok diya", "गाना रोक दिया", { mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }, endChat = true)
-        "next" -> Reply("Agla gaana", "अगला गाना", { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }, endChat = true)
-        "previous" -> Reply("Pichla gaana", "पिछला गाना", {
+        "pause" -> Reply("Paused", "गाना रोक दिया", { mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }, endChat = true)
+        "next" -> Reply("Next song", "अगला गाना", { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }, endChat = true)
+        "previous" -> Reply("Previous song", "पिछला गाना", {
             mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
         }, endChat = true)
-        else -> Reply("Gaana chala rahi hoon", "गाना चला रही हूँ", { mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY) }, endChat = true)
+        else -> Reply("Playing music", "गाना चला रही हूँ", { mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY) }, endChat = true)
     }
 
     private fun playMusic(query: String, app: String): Reply {
@@ -301,12 +301,12 @@ class LillyBrain(private val ctx: Context) {
                 // Spotify akela sirf search dikhata hai; gaana khud chalane ke liye ek permission chahiye
                 if (installed(youtube)) return youtubeReply(query, shown)
                 return Reply(
-                    "Spotify par $shown dhoondh rahi hoon. Gaana khud chalne ke liye Lilly app me \"Gaana auto-play\" ON kijiye",
+                    "Searching $shown on Spotify. To play songs automatically, turn on Song auto-play in the Lilly app",
                     "स्पॉटिफाई पर $shown ढूँढ रही हूँ। गाना खुद चलने के लिए लिली ऐप में गाना ऑटो प्ले ऑन कीजिए",
                     { openExternal(i, "Spotify") }, endChat = true
                 )
             }
-            return Reply("Spotify par $shown chala rahi hoon", "स्पॉटिफाई पर $shown चला रही हूँ", {
+            return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
                 openExternal(i, "Spotify")
                 MusicControl.playFromSearch(ctx, spotify, query)
             }, endChat = true)
@@ -314,21 +314,21 @@ class LillyBrain(private val ctx: Context) {
         if (installed(ytMusic)) {
             // YouTube Music ye intent milte hi gaana chala deta hai
             i.setPackage(ytMusic)
-            return Reply("YouTube Music par $shown chala rahi hoon", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
+            return Reply("Playing $shown on YouTube Music", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
                 openExternal(i, "YouTube Music")
                 MusicControl.playFromSearch(ctx, ytMusic, query)
             }, endChat = true)
         }
         if (installed(youtube)) return youtubeReply(query, shown)
         if (i.resolveActivity(ctx.packageManager) != null) {
-            return Reply("$shown chala rahi hoon", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
+            return Reply("Playing $shown", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
         }
-        return Reply("Gaana chalane ke liye Spotify install kijiye", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true)
+        return Reply("Please install Spotify or YouTube to play songs", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true)
     }
 
     /** YouTube: pehla result dhoondh kar seedha wahi video chalao (sirf search par na ruke) */
     private fun youtubeReply(query: String, shown: String): Reply =
-        Reply("YouTube par $shown chala rahi hoon", "यूट्यूब पर $shown चला रही हूँ", {
+        Reply("Playing $shown on YouTube", "यूट्यूब पर $shown चला रही हूँ", {
             Thread {
                 val id = MusicControl.firstYouTubeVideo("$query song")
                 Handler(Looper.getMainLooper()).post {
@@ -356,10 +356,10 @@ class LillyBrain(private val ctx: Context) {
         }
         try { audio.setStreamVolume(s, target, AudioManager.FLAG_SHOW_UI) } catch (e: Exception) { }
         return when (action) {
-            "up" -> Reply("Awaaz badha di", "आवाज़ बढ़ा दी", endChat = true)
-            "down" -> Reply("Awaaz kam kar di", "आवाज़ कम कर दी", endChat = true)
-            "max" -> Reply("Awaaz full kar di", "आवाज़ फुल कर दी", endChat = true)
-            else -> Reply("Mute kar diya", "म्यूट कर दिया", endChat = true)
+            "up" -> Reply("Volume up", "आवाज़ बढ़ा दी", endChat = true)
+            "down" -> Reply("Volume down", "आवाज़ कम कर दी", endChat = true)
+            "max" -> Reply("Volume at maximum", "आवाज़ फुल कर दी", endChat = true)
+            else -> Reply("Muted", "म्यूट कर दिया", endChat = true)
         }
     }
 
@@ -380,7 +380,7 @@ class LillyBrain(private val ctx: Context) {
         }
         if (special != null) {
             val label = first.replaceFirstChar { it.uppercase() }
-            return Reply("$label khol rahi hoon", "$label खोल रही हूँ", { openExternal(special, label) }, endChat = true)
+            return Reply("Opening $label", "$label खोल रही हूँ", { openExternal(special, label) }, endChat = true)
         }
 
         // Har sune gaye naam ko har app ke label se milao, sabse achha match chuno
@@ -408,17 +408,17 @@ class LillyBrain(private val ctx: Context) {
         if (pkg == null) {
             if (orMusic) return playMusic(names.first(), "")
             val said = names.first().replaceFirstChar { it.uppercase() }
-            return Reply("\"$said\" naam ka app nahi mila", "$said नाम का ऐप नहीं मिला", endChat = true)
+            return Reply("I couldn't find an app called $said", "$said नाम का ऐप नहीं मिला", endChat = true)
         }
         if (!isAppAllowed(pkg)) {
             return Reply(
-                "$bestLabel kholne ki permission nahi di hai. Lilly app me allow kijiye",
+                "$bestLabel is not allowed. You can allow it in the Lilly app",
                 "$bestLabel खोलने की परमिशन नहीं दी है", endChat = true
             )
         }
         val intent = pm.getLaunchIntentForPackage(pkg)
-            ?: return Reply("$bestLabel nahi khul paya", "$bestLabel नहीं खुल पाया", endChat = true)
-        return Reply("$bestLabel khol rahi hoon", "$bestLabel खोल रही हूँ", { openExternal(intent, bestLabel) }, endChat = true)
+            ?: return Reply("I couldn't open $bestLabel", "$bestLabel नहीं खुल पाया", endChat = true)
+        return Reply("Opening $bestLabel", "$bestLabel खोल रही हूँ", { openExternal(intent, bestLabel) }, endChat = true)
     }
 
     /**

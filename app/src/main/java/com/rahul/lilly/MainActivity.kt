@@ -115,7 +115,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         titles.addView(label("Lilly", 34f, Color.WHITE).apply {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
         })
-        titles.addView(label("Aapki personal assistant", 13f, dim))
+        titles.addView(label("Your personal assistant", 13f, dim))
         header.addView(titles, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         power = label("", 14f, Color.WHITE, true).apply {
             setPadding(dp(18), dp(10), dp(18), dp(10))
@@ -154,7 +154,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         col.addView(heard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        col.addView(label("Boliye “Lilly” ya “Hey Lilly”", 13f, dim).apply {
+        col.addView(label("Say “Lilly” or “Hey Lilly”", 13f, dim).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(2), 0, dp(18))
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -167,33 +167,33 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r1 = row(col)
         lockValue = card(r1, "🔒", "Lock screen call") { chooseLockMode() }
-        card(r1, "🎙", "Awaaz badlo") { sendToEngine(LillyService.ACTION_NEXT_VOICE) }
-            .text = "Agli awaaz try karo"
+        card(r1, "🎙", "Change voice") { sendToEngine(LillyService.ACTION_NEXT_VOICE) }
+            .text = "Try the next voice"
 
         val r2 = row(col)
-        card(r2, "▶️", "Awaaz suno") { sendToEngine(LillyService.ACTION_TEST_VOICE) }
-            .text = "Abhi wali awaaz test"
-        voiceValue = card(r2, "⬇️", "Natural awaaz") { downloadVoice() }
+        card(r2, "▶️", "Hear voice") { sendToEngine(LillyService.ACTION_TEST_VOICE) }
+            .text = "Test the current voice"
+        voiceValue = card(r2, "⬇️", "Natural voice") { downloadVoice() }
 
         val r3 = row(col)
-        appsValue = card(r3, "📱", "Har screen par orb + apps") { appsAnywhere() }
-        batteryValue = card(r3, "🔋", "Background me chalna") { batterySettings() }
+        appsValue = card(r3, "📱", "Orb on every screen + apps") { appsAnywhere() }
+        batteryValue = card(r3, "🔋", "Run in background") { batterySettings() }
 
         val r4 = row(col)
-        card(r4, "💡", "Kya bol sakte ho") { showHelp() }.text = "Commands dekho"
-        card(r4, "🛡", "Security") { showSecurity() }.text = "Lilly kitni safe hai"
+        card(r4, "💡", "What you can say") { showHelp() }.text = "See commands"
+        card(r4, "🛡", "Security") { showSecurity() }.text = "How safe Lilly is"
 
         val r5 = row(col)
-        langValue = card(r5, "🗣", "Sunne ki bhasha") { chooseLanguage() }
-        card(r5, "🔕", "Notification chhupao") { hideNotification() }.text = "Tap karke OFF karein"
+        langValue = card(r5, "🗣", "Listening language") { chooseLanguage() }
+        card(r5, "🔕", "Hide notification") { hideNotification() }.text = "Tap to turn it off"
 
         val r6 = row(col)
-        allowedValue = card(r6, "✅", "Voice se khulne wale apps") { chooseApps() }
-        aiValue = card(r6, "🤖", "AI baat-cheet") { aiSetup() }
+        allowedValue = card(r6, "✅", "Apps Lilly can open") { chooseApps() }
+        aiValue = card(r6, "🤖", "AI chat") { aiSetup() }
 
         val r7 = row(col)
-        lockPopupValue = card(r7, "🔓", "Lock screen par orb") { lockPopupSetup() }
-        musicValue = card(r7, "🎵", "Gaana auto-play") { musicSetup() }
+        lockPopupValue = card(r7, "🔓", "Orb on lock screen") { lockPopupSetup() }
+        musicValue = card(r7, "🎵", "Song auto-play") { musicSetup() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -208,19 +208,19 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun refreshCards() {
-        aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — har baat ka jawab chahiye toh ON karein" else "ON ✓"
-        lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap karke allow karein"
-        musicValue.text = if (MusicControl.hasAccess(this)) "Spotify ON ✓" else "Abhi YouTube se — Spotify ke liye tap"
+        aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — turn on to get answers to anything" else "ON ✓"
+        lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap to allow"
+        musicValue.text = if (MusicControl.hasAccess(this)) "Spotify ON ✓" else "Using YouTube — tap for Spotify"
         val allowed = prefs.getStringSet("allowed_apps", null)
-        allowedValue.text = if (allowed == null) "Sab apps allowed" else "${allowed.size} apps allowed"
+        allowedValue.text = if (allowed == null) "All apps allowed" else "${allowed.size} apps allowed"
         voiceValue.text =
-            if (prefs.getBoolean("has_hi_voice", true)) "Behtar Hindi voice download" else "Hindi voice nahi mili — download karein"
-        langValue.text = langLabel(prefs.getString("lang", "hi") ?: "hi")
+            if (prefs.getBoolean("has_hi_voice", true)) "Download a better voice" else "No Hindi voice found — download"
+        langValue.text = langLabel(prefs.getString("lang", "auto") ?: "auto")
         lockValue.text = lockLabel(prefs.getString("lock_mode", "fav") ?: "fav")
-        appsValue.text = if (Settings.canDrawOverlays(this)) "ON ✓" else "OFF — tap karke ON karein"
+        appsValue.text = if (Settings.canDrawOverlays(this)) "ON ✓" else "OFF — tap to turn on"
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         batteryValue.text =
-            if (pm.isIgnoringBatteryOptimizations(packageName)) "Allowed ✓" else "Rukawat hai — tap karein"
+            if (pm.isIgnoringBatteryOptimizations(packageName)) "Allowed ✓" else "Restricted — tap to fix"
     }
 
     override fun onStatus(text: String) = runOnUiThread { status.text = text }
@@ -239,15 +239,15 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private val lockModes = listOf("off", "fav", "all")
     private fun lockLabel(m: String) = when (m) {
-        "off" -> "Band (sabse safe)"
-        "all" -> "Sab contacts (kam safe)"
-        else -> "Sirf favourite ⭐"
+        "off" -> "Off (safest)"
+        "all" -> "All contacts (less safe)"
+        else -> "Favourites only ⭐"
     }
 
     private fun chooseLockMode() {
         val cur = lockModes.indexOf(prefs.getString("lock_mode", "fav") ?: "fav")
         AlertDialog.Builder(this)
-            .setTitle("Phone lock ho tab Lilly kisko call kar sake?")
+            .setTitle("Who can Lilly call while the phone is locked?")
             .setSingleChoiceItems(lockModes.map { lockLabel(it) }.toTypedArray(), cur) { d, which ->
                 prefs.edit().putString("lock_mode", lockModes[which]).apply()
                 refreshCards()
@@ -263,18 +263,18 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun lockPopupSetup() {
         if (canFullScreen()) {
             AlertDialog.Builder(this)
-                .setTitle("Lock screen par orb")
+                .setTitle("Orb on lock screen")
                 .setMessage(
-                    "Ye permission mil chuki hai. Agar phir bhi lock screen par orb na aaye toh " +
-                        "\"Har screen par orb + apps\" wali permission bhi ON kijiye."
+                    "This permission is already allowed. If the orb still doesn't appear on the lock screen, " +
+                        "also turn on \"Orb on every screen + apps\"."
                 )
                 .setPositiveButton("OK", null).show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Lock screen par orb")
-            .setMessage("Agli screen par Lilly ke liye \"Full screen notifications\" ALLOW kar dijiye. Isse phone lock hone par bhi orb apne aap khulega.")
-            .setPositiveButton("Kholo") { _, _ ->
+            .setTitle("Orb on lock screen")
+            .setMessage("On the next screen, allow \"Full screen notifications\" for Lilly. The orb will then open by itself even when the phone is locked.")
+            .setPositiveButton("Open") { _, _ ->
                 val ok = Build.VERSION.SDK_INT >= 34 && tryStart(
                     Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName"))
                 )
@@ -282,13 +282,13 @@ class MainActivity : Activity(), LillyBus.Ui {
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                 )
             }
-            .setNegativeButton("Rehne do", null).show()
+            .setNegativeButton("Not now", null).show()
     }
 
     /** Normal baat-cheet ke liye AI key (Gemini free ya Anthropic) */
     private fun aiSetup() {
         val input = android.widget.EditText(this).apply {
-            hint = "Yahan AI key paste karein"
+            hint = "Paste your AI key here"
             setSingleLine(true)
             setText(prefs.getString("ai_key", ""))
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -298,26 +298,26 @@ class MainActivity : Activity(), LillyBus.Ui {
             addView(input)
         }
         AlertDialog.Builder(this)
-            .setTitle("🤖 AI baat-cheet")
+            .setTitle("🤖 AI chat")
             .setMessage(
-                "Isse Lilly aapki kisi bhi baat ka jawab de sakti hai (sawal, gappe, jaankari).\n\n" +
-                    "Iske liye ek AI key chahiye:\n" +
-                    "• Google Gemini — free: \"Key banao\" dabaiye, Google se login karke \"Create API key\" kijiye, key copy karke yahan paste kijiye\n" +
-                    "• Ya Anthropic (Claude) key, jo sk-ant- se shuru hoti hai\n\n" +
-                    "Dhyan rahe: ON karne par aapka poochha gaya sawal internet se us AI company ko jaata hai. " +
-                    "Call, apps, gaane jaise commands phone ke andar hi rehte hain."
+                "With this, Lilly can answer anything you say (questions, small talk, information).\n\n" +
+                    "You need an AI key:\n" +
+                    "• Google Gemini — free: tap \"Get key\", sign in with Google, tap \"Create API key\", then copy the key and paste it here\n" +
+                    "• Or an Anthropic (Claude) key, which starts with sk-ant-\n\n" +
+                    "Note: when this is on, the question you ask is sent over the internet to that AI company. " +
+                    "Commands like calls, apps and songs stay on your phone."
             )
             .setView(box)
-            .setPositiveButton("Save aur test") { _, _ ->
+            .setPositiveButton("Save & test") { _, _ ->
                 val key = input.text.toString().filter { !it.isWhitespace() }
                 prefs.edit().putString("ai_key", key).apply()
                 refreshCards()
                 if (key.isNotEmpty()) testAiKey(key)
             }
-            .setNeutralButton("Key banao") { _, _ ->
+            .setNeutralButton("Get key") { _, _ ->
                 tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey")))
             }
-            .setNegativeButton("OFF karo") { _, _ ->
+            .setNegativeButton("Turn off") { _, _ ->
                 prefs.edit().remove("ai_key").apply()
                 refreshCards()
             }
@@ -326,18 +326,18 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     /** Key save hote hi ek chhota sawal bhej kar dekho ki AI sach me jawab de raha hai */
     private fun testAiKey(key: String) {
-        android.widget.Toast.makeText(this, "AI key test ho rahi hai…", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, "Testing the AI key…", android.widget.Toast.LENGTH_SHORT).show()
         Thread {
             var failure: Throwable? = null
-            val answer = try { AiChat.ask(key, emptyList(), "Namaste bolo") } catch (e: Exception) { failure = e; null }
+            val answer = try { AiChat.ask(key, emptyList(), "Say hello") } catch (e: Exception) { failure = e; null }
             runOnUiThread {
                 if (isFinishing) return@runOnUiThread
                 val b = AlertDialog.Builder(this)
                 if (answer != null) {
-                    b.setTitle("AI chal raha hai ✓").setMessage("Lilly ka jawab:\n" + answer.display)
+                    b.setTitle("AI is working ✓").setMessage("Lilly's reply:\n" + answer.display)
                 } else {
                     val detail = (failure as? AiChat.AiError)?.let { "\n\nServer: HTTP ${it.code} ${it.detail}" } ?: ""
-                    b.setTitle("AI nahi chala ✗").setMessage(AiChat.explain(failure).first + detail)
+                    b.setTitle("AI didn't work ✗").setMessage(AiChat.explain(failure).first + detail)
                 }
                 b.setPositiveButton("OK", null).show()
             }
@@ -355,14 +355,14 @@ class MainActivity : Activity(), LillyBus.Ui {
         val saved = prefs.getStringSet("allowed_apps", null)
         val checked = BooleanArray(apps.size) { saved == null || apps[it].first in saved }
         AlertDialog.Builder(this)
-            .setTitle("Lilly voice se kaunse apps khol sake?")
+            .setTitle("Which apps can Lilly open by voice?")
             .setMultiChoiceItems(apps.map { it.second }.toTypedArray(), checked) { _, i, c -> checked[i] = c }
             .setPositiveButton("Save") { _, _ ->
                 val set = apps.filterIndexed { i, _ -> checked[i] }.map { it.first }.toSet()
                 prefs.edit().putStringSet("allowed_apps", set).apply()
                 refreshCards()
             }
-            .setNeutralButton("Sab allow") { _, _ ->
+            .setNeutralButton("Allow all") { _, _ ->
                 prefs.edit().remove("allowed_apps").apply()
                 refreshCards()
             }
@@ -372,15 +372,15 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun downloadVoice() {
         AlertDialog.Builder(this)
-            .setTitle("Behtar ladki ki awaaz")
+            .setTitle("A better female voice")
             .setMessage(
-                "Lilly Google ki Hindi awaaz use karti hai. Sabse achhi awaaz ke liye:\n\n" +
-                    "1. \"Voice download\" dabaiye aur Hindi (India) download kijiye\n" +
-                    "2. Play Store me \"Speech Recognition & Synthesis\" (Google) update kijiye\n" +
-                    "3. Wapas aakar \"Awaaz badlo\" se alag-alag awaaz sun kar pasand ki chuniye\n\n" +
-                    "Internet ON ho toh Lilly Google ki sabse natural (online) awaaz khud chun leti hai."
+                "Lilly uses Google's Hindi voice, which speaks both Hindi and English. For the best voice:\n\n" +
+                    "1. Tap \"Download voice\" and download Hindi (India)\n" +
+                    "2. Update \"Speech Recognition & Synthesis\" (Google) in the Play Store\n" +
+                    "3. Come back and use \"Change voice\" to listen to the voices and pick your favourite\n\n" +
+                    "When the internet is on, Lilly picks Google's most natural (online) voice by itself."
             )
-            .setPositiveButton("Voice download") { _, _ ->
+            .setPositiveButton("Download voice") { _, _ ->
                 val ok = tryStart(
                     Intent("android.speech.tts.engine.INSTALL_TTS_DATA").setPackage("com.google.android.tts")
                 )
@@ -391,19 +391,19 @@ class MainActivity : Activity(), LillyBus.Ui {
                     openTtsSettings()
                 }
             }
-            .setNegativeButton("Band", null)
+            .setNegativeButton("Close", null)
             .show()
     }
 
     private fun hideNotification() {
         AlertDialog.Builder(this)
-            .setTitle("Notification chhupana")
+            .setTitle("Hide the notification")
             .setMessage(
-                "Agli screen par switch OFF kar dijiye. Notification gayab ho jaayega aur " +
-                    "Lilly background me chalti rahegi.\n\n" +
-                    "(Android khud ye notification hatane nahi deta, isliye ye aapko ek baar OFF karna hoga.)"
+                "Turn the switch off on the next screen. The notification will disappear and " +
+                    "Lilly will keep running in the background.\n\n" +
+                    "(Android doesn't let an app remove this notification itself, so you need to turn it off once.)"
             )
-            .setPositiveButton("Kholo") { _, _ ->
+            .setPositiveButton("Open") { _, _ ->
                 val ok = Build.VERSION.SDK_INT >= 26 && tryStart(
                     Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                         .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
@@ -413,18 +413,22 @@ class MainActivity : Activity(), LillyBus.Ui {
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                 )
             }
-            .setNegativeButton("Rehne do", null)
+            .setNegativeButton("Not now", null)
             .show()
     }
 
     private fun langLabel(l: String) =
-        if (l == "en") "English (Indian)" else "Hindi + English (Hinglish)"
+        when (l) {
+            "en" -> "English only"
+            "hi" -> "Hindi + Hinglish"
+            else -> "Auto: English + Hindi + Hinglish"
+        }
 
     private fun chooseLanguage() {
-        val codes = listOf("hi", "en")
-        val cur = codes.indexOf(prefs.getString("lang", "hi") ?: "hi")
+        val codes = listOf("auto", "hi", "en")
+        val cur = codes.indexOf(prefs.getString("lang", "auto") ?: "auto")
         AlertDialog.Builder(this)
-            .setTitle("Lilly aapki baat kis bhasha me sune?")
+            .setTitle("Which language should Lilly listen for?")
             .setSingleChoiceItems(codes.map { langLabel(it) }.toTypedArray(), cur) { d, which ->
                 prefs.edit().putString("lang", codes[which]).apply()
                 refreshCards()
@@ -436,23 +440,23 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun appsAnywhere() {
         if (Settings.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
-                .setTitle("ON hai ✓")
-                .setMessage("Ab \"Hey Lilly\" bolne par kisi bhi app ke upar neeche Siri jaisa orb aayega, aur apps seedha khulenge.")
+                .setTitle("It's on ✓")
+                .setMessage("Now when you say \"Hey Lilly\", the orb appears at the bottom over any app, and apps open directly.")
                 .setPositiveButton("OK", null).show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Har screen par Siri jaisa orb")
+            .setTitle("Orb on every screen")
             .setMessage(
-                "Ye ON kiye bina orb apne aap nahi khulta, sirf notification aata hai.\n\n" +
-                    "ON karne par \"Lilly\" bolte hi lock screen aur home screen dono par " +
-                    "neeche Siri jaisa orb khud aa jaayega.\n\n" +
-                    "Agar \"App was denied access\" aaye:\n" +
-                    "1. \"App info\" dabaiye\n" +
-                    "2. Upar ⋮ (3 dots) → \"Allow restricted settings\"\n" +
-                    "3. Wapas aakar \"Permission\" dabaiye aur ON kijiye\n\n" +
-                    "OFF rehne par bhi apps khulte hain: lock screen par popup se (unlock ke baad), " +
-                    "warna ek tap wale notification se."
+                "Without this, the orb can't open by itself; you only get a notification.\n\n" +
+                    "With it on, the orb appears at the bottom of both the lock screen and the home screen " +
+                    "as soon as you say \"Lilly\".\n\n" +
+                    "If you see \"App was denied access\":\n" +
+                    "1. Tap \"App info\"\n" +
+                    "2. Tap ⋮ (3 dots) at the top → \"Allow restricted settings\"\n" +
+                    "3. Come back, tap \"Permission\" and turn it on\n\n" +
+                    "Apps still open with this off: from the popup on the lock screen (after unlocking), " +
+                    "or from a one-tap notification."
             )
             .setPositiveButton("Permission") { _, _ ->
                 tryStart(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
@@ -460,33 +464,33 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setNeutralButton("App info") { _, _ ->
                 tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
-            .setNegativeButton("Rehne do", null)
+            .setNegativeButton("Not now", null)
             .show()
     }
 
     private fun musicSetup() {
         if (MusicControl.hasAccess(this)) {
             AlertDialog.Builder(this)
-                .setTitle("ON hai ✓")
+                .setTitle("It's on ✓")
                 .setMessage(
-                    "Ab \"Lilly, Kesariya chalao\" bolne par Spotify me gaana khud bajne lagega.\n\n" +
-                        "YouTube par chahiye toh boliye: \"YouTube par Kesariya chalao\"."
+                    "Now when you say \"Lilly, play Kesariya\", the song starts playing in Spotify by itself.\n\n" +
+                        "For YouTube, say: \"Play Kesariya on YouTube\"."
                 )
                 .setPositiveButton("OK", null).show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Spotify me gaana khud chale")
+            .setTitle("Play songs in Spotify automatically")
             .setMessage(
-                "Spotify bahar ke app se sirf search kholta hai, gaana nahi chalata. " +
-                    "Isliye abhi Lilly gaane YouTube par chalati hai.\n\n" +
-                    "Spotify me seedha gaana chalane ke liye agli screen par \"Lilly\" ko ON kijiye " +
-                    "(Notification access). Lilly aapke notifications padhti ya kahin bhejti nahi hai; " +
-                    "ye permission sirf music app ko \"ye gaana chalao\" bolne ke liye hai.\n\n" +
-                    "Agar \"Restricted setting\" aaye:\n" +
-                    "1. \"App info\" dabaiye\n" +
-                    "2. Upar ⋮ (3 dots) → \"Allow restricted settings\"\n" +
-                    "3. Wapas aakar \"Permission\" dabaiye aur ON kijiye"
+                "Spotify only opens a search when another app asks; it doesn't start the song. " +
+                    "So for now Lilly plays songs on YouTube.\n\n" +
+                    "To play songs directly in Spotify, turn on \"Lilly\" on the next screen " +
+                    "(Notification access). Lilly doesn't read or send your notifications; " +
+                    "this permission is only used to tell the music app which song to play.\n\n" +
+                    "If you see \"Restricted setting\":\n" +
+                    "1. Tap \"App info\"\n" +
+                    "2. Tap ⋮ (3 dots) at the top → \"Allow restricted settings\"\n" +
+                    "3. Come back, tap \"Permission\" and turn it on"
             )
             .setPositiveButton("Permission") { _, _ ->
                 tryStart(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -494,7 +498,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setNeutralButton("App info") { _, _ ->
                 tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
-            .setNegativeButton("Rehne do", null)
+            .setNegativeButton("Not now", null)
             .show()
     }
 
@@ -509,22 +513,22 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun showHelp() {
         AlertDialog.Builder(this)
-            .setTitle("Pehle boliye \"Lilly\" ya \"Hey Lilly\", phir:")
+            .setTitle("Say \"Lilly\" or \"Hey Lilly\", then (English, Hindi or Hinglish):")
             .setItems(
                 arrayOf(
                     "📞  \"Rahul ko call karo\"",
-                    "📞  \"Call Mummy\"",
+                    "📞  \"Call Mummy\" / \"मम्मी को फोन लगाओ\"",
                     "📱  \"Open YouTube\" / \"WhatsApp kholo\"",
                     "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
-                    "🎵  \"YouTube par Kesariya chalao\"",
-                    "⏯  \"Gaana band karo\" / \"Next song\" / \"Pichla gaana\"",
-                    "🔊  \"Volume badhao\" / \"Awaaz kam karo\"",
-                    "🔋  \"Battery kitni hai\"",
-                    "📷  \"Camera kholo\"",
-                    "🔦  \"Torch jalao\" / \"Torch band karo\"",
-                    "🕒  \"Kitne baje hain\"",
-                    "📅  \"Aaj ki date kya hai\"",
-                    "💬  \"Kaisi ho\" / \"Thank you\""
+                    "🎵  \"Play Kesariya on YouTube\" / \"YouTube par Kesariya chalao\"",
+                    "⏯  \"Pause\" / \"Next song\" / \"Gaana band karo\"",
+                    "🔊  \"Volume up\" / \"Awaaz kam karo\"",
+                    "🔋  \"How much battery is left\" / \"Battery kitni hai\"",
+                    "📷  \"Open camera\" / \"Camera kholo\"",
+                    "🔦  \"Turn on the torch\" / \"Torch band karo\"",
+                    "🕒  \"What time is it\" / \"Kitne baje hain\"",
+                    "📅  \"What's the date\" / \"Aaj ki date kya hai\"",
+                    "💬  \"How are you\" / \"Kaisi ho\" / \"Thank you\""
                 ), null
             )
             .setPositiveButton("OK", null).show()
@@ -534,11 +538,12 @@ class MainActivity : Activity(), LillyBus.Ui {
         AlertDialog.Builder(this)
             .setTitle("🛡 Security")
             .setMessage(
-                "• \"Hey Lilly\" phone ke andar hi (offline) pehchana jaata hai\n" +
-                    "• Internet sirf \"AI baat-cheet\" ke liye use hota hai, aur tabhi jab aap use ON karein\n" +
-                    "• Lock screen par call sirf aapki chuni hui list ko\n" +
-                    "• Lock screen se app kholne par pehle unlock maanga jaata hai\n" +
-                    "• App data ka backup band hai"
+                "• \"Hey Lilly\" is recognised on the phone itself (offline)\n" +
+                    "• Your commands are turned into text by your phone's Google speech service\n" +
+                    "• Questions go to an AI company only if you turn on \"AI chat\"; playing a song on YouTube looks it up online\n" +
+                    "• On the lock screen, calls go only to the list you chose\n" +
+                    "• Opening an app from the lock screen asks you to unlock first\n" +
+                    "• App data backup is off"
             )
             .setPositiveButton("OK", null).show()
     }
@@ -566,7 +571,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         super.onResume()
         LillyBus.ui = this
         LillyBus.launcher = myLauncher
-        status.text = LillyBus.lastStatus.ifBlank { "Shuru ho rahi hoon…" }
+        status.text = LillyBus.lastStatus.ifBlank { "Starting up…" }
         heard.text = LillyBus.lastHeard
         orb.state = LillyBus.lastOrb
         onRunning(LillyBus.running)
@@ -592,7 +597,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         try {
             LillyService.start(this)
         } catch (e: Exception) {
-            status.text = "Lilly shuru nahi ho payi: ${e.message}"
+            status.text = "Lilly couldn't start: ${e.message}"
         }
     }
 
@@ -617,7 +622,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (hasMic()) startEngine() else status.text = "Lilly ko sunne ke liye Mic permission chahiye"
+        if (hasMic()) startEngine() else status.text = "Lilly needs the Microphone permission to hear you"
     }
 
     /** Battery optimization se chhoot — ek hi baar poochha jaata hai */

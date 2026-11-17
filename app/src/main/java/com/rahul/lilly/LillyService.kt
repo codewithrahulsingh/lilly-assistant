@@ -55,7 +55,7 @@ class LillyService : Service() {
         fun notifyOpen(ctx: Context, label: String, intent: Intent) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
-                NotificationChannel("lilly_open", "App kholna", NotificationManager.IMPORTANCE_HIGH).apply {
+                NotificationChannel("lilly_open", "Open app", NotificationManager.IMPORTANCE_HIGH).apply {
                     setSound(null, null)
                 }
             )
@@ -64,7 +64,7 @@ class LillyService : Service() {
             )
             val n = Notification.Builder(ctx, "lilly_open")
                 .setSmallIcon(R.drawable.ic_stat_lilly)
-                .setContentTitle("$label kholne ke liye tap karein")
+                .setContentTitle("Tap to open $label")
                 .setContentText("Lilly")
                 .setColor(0xFF7B2FF7.toInt())
                 .setContentIntent(pi)
@@ -78,7 +78,7 @@ class LillyService : Service() {
         fun notifyTapToStart(ctx: Context) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(
-                NotificationChannel(START_CHANNEL, "Lilly shuru karein", NotificationManager.IMPORTANCE_DEFAULT)
+                NotificationChannel(START_CHANNEL, "Start Lilly", NotificationManager.IMPORTANCE_DEFAULT)
             )
             val open = PendingIntent.getActivity(
                 ctx, 3, Intent(ctx, MainActivity::class.java),
@@ -86,8 +86,8 @@ class LillyService : Service() {
             )
             val n = Notification.Builder(ctx, START_CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_lilly)
-                .setContentTitle("Lilly so rahi hai")
-                .setContentText("Tap karein, Lilly phir se sunna shuru kar degi")
+                .setContentTitle("Lilly is asleep")
+                .setContentText("Tap and Lilly will start listening again")
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()
@@ -226,7 +226,7 @@ class LillyService : Service() {
         // Phone call chal rahi ho toh mic mat chhedo, thodi der baad dobara dekho
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         if (am.mode == AudioManager.MODE_IN_CALL || am.mode == AudioManager.MODE_IN_COMMUNICATION) {
-            LillyBus.status("Call chal rahi hai…")
+            LillyBus.status("On a call…")
             handler.postDelayed(wakeRunnableRef(), 3000)
         } else listen(Mode.WAKE)
     }
@@ -248,6 +248,7 @@ class LillyService : Service() {
         if (!started) {
             started = true
             brain = LillyBrain(this)
+            english = prefs.getBoolean("reply_en", false)
             restoreMutedStreams()
             initTts(useGoogle = true)
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -276,7 +277,7 @@ class LillyService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(
-                CHANNEL, "Background me chalna (ise OFF kar sakte hain)", NotificationManager.IMPORTANCE_LOW
+                CHANNEL, "Running in background (you can turn this off)", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
@@ -293,13 +294,13 @@ class LillyService : Service() {
         )
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_lilly)
-            .setContentTitle("Lilly sun rahi hai")
+            .setContentTitle("Lilly is listening")
             .setContentIntent(open)
             .setOngoing(true)
             .setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_SECRET)
-            .addAction(Notification.Action.Builder(null, "Baat karo", talk).build())
-            .addAction(Notification.Action.Builder(null, "Band karo", stop).build())
+            .addAction(Notification.Action.Builder(null, "Talk", talk).build())
+            .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .build()
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -406,13 +407,13 @@ class LillyService : Service() {
         val v = tts?.voice ?: return "default"
         val idx = voiceList.indexOfFirst { it.name == v.name } + 1
         val kind = if (v.isNetworkConnectionRequired) "natural (online)" else "offline"
-        return "Awaaz $idx/${voiceList.size} — $kind"
+        return "Voice $idx/${voiceList.size} — $kind"
     }
 
     private fun nextVoice() {
         val t = tts ?: return
         if (voiceList.isEmpty()) {
-            say("Phone me Hindi awaaz nahi mili. Settings me Google voice data download kijiye", "हिंदी आवाज़ नहीं मिली")
+            sayBi("No Hindi voice found on this phone. Please download Google voice data in Settings", "हिंदी आवाज़ नहीं मिली")
             return
         }
         val cur = voiceList.indexOfFirst { it.name == t.voice?.name }
@@ -424,7 +425,8 @@ class LillyService : Service() {
 
     private fun testVoice() {
         val back = mode == Mode.WAKE || mode == Mode.STOPPED
-        say(voiceLabel(), "नमस्ते, मैं लिली हूँ। ये आवाज़ कैसी लगी?") { if (back) listen(Mode.WAKE) }
+        val sample = if (english) "Hello, I'm Lilly. How does this voice sound?" else "नमस्ते, मैं लिली हूँ। ये आवाज़ कैसी लगी?"
+        say(voiceLabel(), sample) { if (back) listen(Mode.WAKE) }
     }
 
     private var currentUtterance: String? = null
@@ -442,6 +444,21 @@ class LillyService : Service() {
             if (mode == Mode.SPEAKING) mode = Mode.WAKE
             if (next != null) next.invoke() else restartLater(200)
         }
+    }
+
+    /** Pichhli baar user ne English me bola tha ya Hindi/Hinglish me — Lilly usi bhasha me bolti hai */
+    private var english = false
+
+    private fun noteLanguage(heard: String) {
+        english = Parser.isEnglish(heard)
+        prefs.edit().putBoolean("reply_en", english).apply()
+    }
+
+    /** Screen par hamesha English; bolna user ki bhasha me (English ya Hindi) */
+    private fun sayBi(en: String, hi: String, then: (() -> Unit)? = null) {
+        // Bolne ke liye emoji / chinh hata do
+        val enSpoken = en.replace(Regex("[^\\p{L}\\p{N} .,!?:'%-]"), " ").replace("%", " percent").trim()
+        say(en, if (english || hi.isBlank()) enSpoken else hi, then)
     }
 
     private fun say(display: String, spoken: String, then: (() -> Unit)? = null) {
@@ -486,7 +503,7 @@ class LillyService : Service() {
     private fun ensureRecognizer(): SpeechRecognizer? {
         if (recognizer == null) {
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                LillyBus.status("Is phone me speech recognition nahi mila. Google app install/update karein.")
+                LillyBus.status("Speech recognition isn't available on this phone. Please install or update the Google app.")
                 return null
             }
             recognizer = SpeechRecognizer.createSpeechRecognizer(this).also { it.setRecognitionListener(listener) }
@@ -496,9 +513,14 @@ class LillyService : Service() {
 
     private fun recognizerIntent(command: Boolean) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        val lang = if (prefs.getString("lang", "hi") == "en") "en-IN" else "hi-IN"
+        // "auto": Hindi recognizer (jo Hinglish aur English shabd bhi samajhta hai) + English ko doosri bhasha ki tarah
+        val pref = prefs.getString("lang", "auto") ?: "auto"
+        val lang = if (pref == "en") "en-IN" else "hi-IN"
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
+        if (pref == "auto") {
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN"))
+        }
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
@@ -591,7 +613,7 @@ class LillyService : Service() {
             try { recognizer?.cancel() } catch (e: Exception) { }
             mode = Mode.WAKE
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Lilly\" ya \"Hey Lilly\" boliye")
+            LillyBus.status("Say \"Lilly\" or \"Hey Lilly\"")
             lastEvent = System.currentTimeMillis()
             if (!startVosk()) restartLater(1500)
             return
@@ -602,10 +624,10 @@ class LillyService : Service() {
         mode = newMode
         if (newMode == Mode.COMMAND) {
             LillyBus.orb(OrbView.State.LISTENING)
-            LillyBus.status("Sun rahi hoon…")
+            LillyBus.status("Listening…")
         } else {
             LillyBus.orb(OrbView.State.IDLE)
-            LillyBus.status("\"Lilly\" ya \"Hey Lilly\" boliye")
+            LillyBus.status("Say \"Lilly\" or \"Hey Lilly\"")
         }
         lastEvent = System.currentTimeMillis()
         try {
@@ -648,7 +670,7 @@ class LillyService : Service() {
                             retries++
                             listen(Mode.COMMAND)
                         } else {
-                            say("Kuch sunai nahi diya", "कुछ सुनाई नहीं दिया") { endSession(); listen(Mode.WAKE) }
+                            sayBi("I didn't hear anything", "कुछ सुनाई नहीं दिया") { endSession(); listen(Mode.WAKE) }
                         }
                     } else { endSession(); restartLater(600) }
                 Mode.WAKE -> restartLater(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1000 else 250)
@@ -708,7 +730,7 @@ class LillyService : Service() {
         followUp = false
         aiHistory.clear()
         holdAudioFocus(true)
-        say("Haan Rahul, bolo kya karu?", "हाँ राहुल, बोलो क्या करूँ") { listen(Mode.COMMAND) }
+        sayBi("Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ") { listen(Mode.COMMAND) }
     }
 
     // ---------------- Siri jaisa popup (lock screen par bhi) ----------------
@@ -750,7 +772,7 @@ class LillyService : Service() {
         val n = Notification.Builder(this, liveChannel)
             .setSmallIcon(R.drawable.ic_stat_lilly)
             .setContentTitle("Lilly")
-            .setContentText("Sun rahi hoon…")
+            .setContentText("Listening…")
             .setCategory(Notification.CATEGORY_CALL)
             .setFullScreenIntent(pi, true)
             .setContentIntent(pi)
@@ -769,7 +791,8 @@ class LillyService : Service() {
     }
 
     private fun runCommand(rawText: String, alternatives: List<String>) {
-        val text = brain.roman(rawText) // screen par Hinglish/English me dikhao
+        val text = brain.roman(rawText) // screen par Roman lipi me dikhao
+        noteLanguage(rawText)
         LillyBus.heard("“$text”")
         LillyBus.ui?.keepAlive()
         followUp = false
@@ -779,7 +802,7 @@ class LillyService : Service() {
             askAi(question)
             return
         }
-        say(reply.display, reply.spoken) {
+        sayBi(reply.display, reply.spoken) {
             if (reply.endChat || reply.action != null) {
                 endSession()
                 reply.action?.invoke()
@@ -804,7 +827,7 @@ class LillyService : Service() {
         handler.removeCallbacks(wakeRunnable)
         try { recognizer?.cancel() } catch (e: Exception) { }
         mode = Mode.SPEAKING
-        LillyBus.status("Soch rahi hoon…")
+        LillyBus.status("Thinking…")
         LillyBus.orb(OrbView.State.SPEAKING)
         LillyBus.ui?.keepAlive()
         val key = prefs.getString("ai_key", "") ?: ""
@@ -817,7 +840,7 @@ class LillyService : Service() {
                 if (result == null) {
                     // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
                     val why = AiChat.explain(failure)
-                    say(why.first, why.second) { endSession(); listen(Mode.WAKE) }
+                    sayBi(why.first, why.second) { endSession(); listen(Mode.WAKE) }
                     return@post
                 }
                 aiHistory.add(AiChat.Turn("user", question))
@@ -851,7 +874,7 @@ class LillyService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         LillyBus.orb(OrbView.State.IDLE)
-        LillyBus.status("Lilly band hai. Orb dabakar chalu karein.")
+        LillyBus.status("Lilly is off. Tap the orb to start.")
         LillyBus.running = false
     }
 

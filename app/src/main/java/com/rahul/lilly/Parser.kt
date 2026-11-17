@@ -84,6 +84,9 @@ object Parser {
         "कैसी" to "kaisi", "कैसे" to "kaise", "हो" to "ho", "कौन" to "kaun", "तुम" to "tum",
         "तुम्हारा" to "tumhara", "नाम" to "naam", "धन्यवाद" to "dhanyavad", "शुक्रिया" to "shukriya",
         "थैंक" to "thank", "थैंक्स" to "thanks", "थैंक्यू" to "thank you", "यू" to "you", "बाय" to "bye",
+        "बताओ" to "batao", "बता" to "bata", "वक्त" to "waqt", "लाइट" to "light", "बदलो" to "badlo",
+        "दूसरा" to "doosra", "नहीं" to "nahi", "हाँ" to "haan", "हां" to "haan", "मेरा" to "mera", "मेरी" to "meri",
+        "मेरे" to "mere", "आप" to "aap", "बात" to "baat", "कराओ" to "karao", "सर्च" to "search",
         "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
     )
 
@@ -251,14 +254,14 @@ object Parser {
         "kholo|khol do|kholdo|kholiye|kholein|kholna|open karo|open kar do|open kardo|open karna|open"
     private const val RUN_VERBS = "chalao|chala do|chalu karo|start karo|shuru karo|launch karo"
     private val openPrefix = Regex(
-        """^(?:please\s+)?(?:open|launch|start|kholo)\s+(?:karo\s+|kar do\s+)?(.+?)(?:\s+(?:karo|kar do|kardo|kijiye|please))?$""", ic
+        """^(?:open up|open|launch|start|run|go to|take me to|bring up|kholo)\s+(?:karo\s+|kar do\s+)?(.+?)(?:\s+(?:karo|kar do|kardo|kijiye))?$""", ic
     )
     private val openSuffix = Regex("""^(.+?)\s+(?:ko\s+)?(?:$OPEN_VERBS)(?:\s+please)?$""", ic)
     private val runSuffix = Regex("""^(.+?)\s+(?:ko\s+)?(?:$RUN_VERBS)(?:\s+please)?$""", ic)
 
     private fun cleanAppName(raw: String): String {
         var n = raw.trim().lowercase(Locale.ROOT)
-        for (p in listOf("the ", "my ", "mera ", "meri ", "ye ", "wo ", "zara ", "jara ", "please ")) n = n.removePrefix(p)
+        for (p in listOf("the ", "my ", "mera ", "meri ", "ye ", "wo ", "zara ", "jara ", "please ", "up ")) n = n.removePrefix(p)
         for (sfx in listOf(" please", " ko", " application", " app", " wala", " wali")) n = n.removeSuffix(sfx)
         return n.trim()
     }
@@ -270,8 +273,19 @@ object Parser {
     private val callPatterns = listOf(
         Regex("""^(.+?)\s+(?:ko|se)\s+(?:$CALL_WORDS)(?:\s+.*)?$""", ic),
         Regex("""^(?:please\s+)?(?:$CALL_WORDS)\s+(?:karo\s+|kar do\s+|lagao\s+|to\s+)?(.+?)(?:\s+ko)?(?:\s+(?:$DO_WORDS))?$""", ic),
-        Regex("""^(.+?)\s+(?:$CALL_WORDS)\s+(?:$DO_WORDS)$""", ic)
+        Regex("""^(.+?)\s+(?:$CALL_WORDS)\s+(?:$DO_WORDS)$""", ic),
+        Regex("""^(?:make|place)\s+a\s+(?:phone\s+)?call\s+to\s+(.+)$""", ic),
+        Regex("""^give\s+(.+?)\s+a\s+(?:call|ring)$""", ic),
+        Regex("""^(?:connect me (?:to|with)|get me)\s+(.+)$""", ic),
+        Regex("""^(.+?)\s+se\s+(?:meri\s+)?baat\s+(?:karao|karwao|karva do|kara do|karwa do|karni hai|karna hai)$""", ic)
     )
+
+    private fun cleanCallName(raw: String): String {
+        var n = raw.trim()
+        for (p in listOf("please ", "up ", "to ", "my ", "mere ", "meri ", "mera ", "apne ", "apni ")) n = n.removePrefix(p)
+        for (sfx in listOf(" ko", " on speaker", " ji ko")) n = n.removeSuffix(sfx)
+        return n.trim()
+    }
 
     // ---------- Music ----------
 
@@ -279,13 +293,14 @@ object Parser {
     private const val PLAY_VERBS =
         "chalao|chala do|bajao|baja do|play karo|play kar do|play kardo|lagao|laga do|sunao|suna do|play|shuru karo"
     private val nextRe = Regex(
-        """^(?:play\s+)?(?:the\s+)?(?:next|skip|agla|agli)(?:\s+(?:$SONG|wala|vala|one))?(?:\s+(?:$PLAY_VERBS|karo|kar do|please))*$""", ic
+        """^(?:play\s+)?(?:the\s+)?(?:next|skip|agla|agli|doosra|dusra)(?:\s+(?:this|the|to the next))?(?:\s+(?:$SONG|wala|vala|one))?(?:\s+(?:$PLAY_VERBS|karo|kar do|please))*$""" +
+            """|^(?:change|switch)\s+(?:the\s+|this\s+)?(?:$SONG)$|^(?:$SONG)\s+(?:badlo|badal do|change karo|change kar do)$""", ic
     )
     private val prevRe = Regex(
         """^(?:play\s+)?(?:the\s+)?(?:previous|pichla|pichhla|pichli|pichhli|last|back)(?:\s+(?:$SONG|wala|vala|one))?(?:\s+(?:$PLAY_VERBS|karo|kar do|please))*$""", ic
     )
     private val pauseRe = Regex(
-        """^(?:pause|stop|ruko|roko|rok do|ruk jao)(?:\s+(?:karo|kar do|the|it|$SONG|spotify|please))*$""" +
+        """^(?:pause|stop|ruko|roko|rok do|ruk jao)(?:\s+(?:karo|kar do|the|it|this|playing|$SONG|spotify|please))*$""" +
             """|^(?:$SONG|spotify)\s+(?:ko\s+)?(?:pause|stop|band|bandh|roko|rok do|ruko)(?:\s+(?:karo|kar do|kardo|please))*$""", ic
     )
     private val resumeRe = Regex(
@@ -293,7 +308,8 @@ object Parser {
             """|^(?:koi\s+|kuch\s+|ek\s+)?(?:$SONG|spotify)\s+(?:$PLAY_VERBS|resume karo|chalu karo)(?:\s+please)?$""", ic
     )
     private val playPatterns = listOf(
-        Regex("""^(?:please\s+)?play\s+(.+)$""", ic),
+        Regex("""^(?:play|put on|listen to)\s+(.+)$""", ic),
+        Regex("""^(.+?)\s+(?:sunna hai|sunna chahta hoon|sunna chahti hoon)$""", ic),
         Regex("""^(?:spotify\s+(?:par|pe|me|mein|on|se)\s+)?(.+?)\s+(?:$SONG)\s+(?:$PLAY_VERBS)(?:\s+please)?$""", ic),
         Regex("""^spotify\s+(?:par|pe|me|mein|on|se)\s+(.+?)\s+(?:$PLAY_VERBS)(?:\s+please)?$""", ic),
         Regex("""^(.+?)\s+(?:bajao|baja do|sunao|suna do|play karo|play kar do|play kardo)(?:\s+please)?$""", ic)
@@ -302,7 +318,7 @@ object Parser {
     private val onAppPatterns = listOf(
         Regex("""^(?:open\s+)?(spotify|youtube)\s+(?:and|aur)\s+(?:play\s+)?(.+?)(?:\s+(?:$PLAY_VERBS))?$""", ic) to false,
         Regex("""^(spotify|youtube)\s+(?:par|pe|me|mein|on|se)\s+(.+?)\s+(?:$PLAY_VERBS|search karo|dhundo|dikhao|dikha do)(?:\s+please)?$""", ic) to false,
-        Regex("""^(?:please\s+)?play\s+(.+?)\s+(?:on|in)\s+(spotify|youtube)$""", ic) to true,
+        Regex("""^(?:play|search for|search|find|look up)\s+(.+?)\s+(?:on|in)\s+(spotify|youtube)$""", ic) to true,
         Regex("""^(.+?)\s+(spotify|youtube)\s+(?:par|pe|me|mein)\s+(?:$PLAY_VERBS)(?:\s+please)?$""", ic) to true
     )
 
@@ -317,29 +333,77 @@ object Parser {
         return if (q in setOf("koi", "kuch", "kuchh", "something", "some", "any", "achha", "accha", "it")) "" else q
     }
 
+    // ---------- Bhasha: English ya Hindi/Hinglish ----------
+
+    /** Ye shabd sirf Hindi/Hinglish me aate hain; inme se ek bhi mile toh vakya Hindi maana jaata hai */
+    private val hindiMarkers = setOf(
+        "karo", "kar", "kardo", "karna", "karni", "kijiye", "karein", "karu", "karun", "karao",
+        "kholo", "khol", "kholna", "kholiye", "chalao", "chala", "chalu", "bajao", "baja", "lagao", "laga",
+        "sunao", "suna", "sunna", "jalao", "jala", "bujhao", "bujha", "band", "bandh", "batao", "bata",
+        "badhao", "badha", "ghatao", "roko", "ruko", "rok", "badlo", "milao",
+        "hai", "hain", "hoon", "ho", "tha", "thi", "hua", "hui", "gaya", "gayi", "raha", "rahi", "rahe",
+        "kya", "kaun", "kaise", "kaisi", "kaisa", "kitna", "kitni", "kitne", "kab", "kahan", "kyun", "kyu",
+        "ko", "ka", "ki", "ke", "se", "par", "pe", "mein", "aur",
+        "mujhe", "mera", "meri", "mere", "tum", "aap", "tumhara", "aapka", "apna", "apni",
+        "nahi", "nahin", "haan", "theek", "thik", "accha", "achha", "abhi", "aaj", "kal", "zara", "jara",
+        "gaana", "gana", "gaane", "gane", "awaaz", "awaz", "kam", "tez", "dheema", "dheemi", "wala", "wali",
+        "baje", "samay", "waqt", "tarikh", "tareekh", "din", "shukriya", "dhanyavad", "namaste", "namaskar",
+        "kuch", "kuchh", "koi", "ek", "bolo", "dena", "dijiye", "chahiye", "wo", "woh", "ye", "yeh",
+        "pichla", "pichli", "agla", "agli", "doosra", "dusra", "baat", "chutkula", "madad", "poori", "puri"
+    )
+
+    /**
+     * true = user ne English me bola. Google aksar English ko bhi Hindi lipi me likh deta hai
+     * ("ओपन यूट्यूब"), isliye lipi nahi, shabd dekhe jaate hain.
+     */
+    fun isEnglish(input: String): Boolean {
+        val words = roman(stripWakeWord(input)).lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9' ]"), " ").split(" ").filter { it.isNotBlank() }
+        if (words.isEmpty()) return false
+        return words.none { it in hindiMarkers }
+    }
+
     // ---------- Main: text -> Cmd ----------
 
-    fun parse(input: String): Cmd {
-        val t = roman(input).lowercase(Locale.ROOT)
+    private val politeLead = Regex(
+        """^(?:(?:please|pls|plz|kindly|ok|okay|can you|could you|would you|will you|can u|i want you to|i want to|""" +
+            """i would like to|i'd like to|i need you to|i need to|go ahead and|kya tum|kya aap|zara|jara)\s+)+"""
+    )
+    private val politeTail = Regex("""(?:\s+(?:please|pls|plz|for me|right now|zara|jara|na))+$""")
+
+    /** Chhote akshar, viraam chinh hatao, "please / can you / zara" jaise shabd hatao */
+    fun normalize(input: String): String {
+        val t = roman(input).lowercase(Locale.ROOT).replace('’', '\'')
             .replace(Regex("[,.!?।]"), " ").replace(Regex("\\s+"), " ").trim()
+        val core = t.replace(politeLead, "").replace(politeTail, "").trim()
+        return core.ifBlank { t }
+    }
+
+    fun parse(input: String): Cmd {
+        val t = normalize(input)
         if (t.isBlank()) return Cmd.Unknown("")
 
         // Torch
-        if (Regex("""\b(torch|flash ?light|flash)\b""").containsMatchIn(t)) {
+        if (Regex("""\b(torch|flash ?light|flash)\b|\b(turn|switch) (on|off) (the )?lights?\b|\blights? (on|off|jalao|jala do|bujhao|bujha do|band)\b""").containsMatchIn(t)) {
             val off = Regex("""\b(off|band|bandh|bujha|bujhao|bujha do)\b""").containsMatchIn(t)
             return Cmd.Torch(!off)
         }
 
         // Volume
-        if (Regex("""\bmute\b""").containsMatchIn(t)) return Cmd.Volume("mute")
+        if (Regex("""\b(unmute|louder|turn it up)\b""").containsMatchIn(t)) return Cmd.Volume("up")
+        if (Regex("""\b(quieter|softer|turn it down)\b""").containsMatchIn(t)) return Cmd.Volume("down")
+        if (Regex("""\b(mute|silent)\b""").containsMatchIn(t)) return Cmd.Volume("mute")
         if (Regex("""\b(volume|awaaz|awaz|awaj|aawaz|aawaj|sound)\b""").containsMatchIn(t)) {
             return when {
                 Regex("""\b(full|max|maximum|poori|puri)\b""").containsMatchIn(t) -> Cmd.Volume("max")
-                Regex("""\b(up|badha|badhao|badha do|tez|zyada|jyada|increase|high|upar)\b""").containsMatchIn(t) -> Cmd.Volume("up")
-                Regex("""\b(down|kam|dheema|dheemi|dhima|dhimi|decrease|ghata|ghatao|low|neeche|niche)\b""").containsMatchIn(t) -> Cmd.Volume("down")
+                Regex("""\b(up|badha|badhao|badha do|tez|zyada|jyada|increase|raise|higher|more|high|upar)\b""").containsMatchIn(t) -> Cmd.Volume("up")
+                Regex("""\b(down|kam|dheema|dheemi|dhima|dhimi|decrease|reduce|lower|less|ghata|ghatao|low|neeche|niche)\b""").containsMatchIn(t) -> Cmd.Volume("down")
                 else -> Cmd.Unknown(t)
             }
         }
+
+        // "ek chutkula sunao" gaana na ban jaaye, isliye music se pehle
+        if (Regex("""\b(joke|jokes|chutkula|chutkule|make me laugh|hasao|hansao)\b""").containsMatchIn(t)) return Cmd.Chat("joke")
 
         // Gaane ka control
         if (nextRe.matches(t)) return Cmd.Media("next")
@@ -364,7 +428,7 @@ object Parser {
         // Call
         for (p in callPatterns) {
             val m = p.find(t) ?: continue
-            val name = m.groupValues[1].trim().removePrefix("please ").trim()
+            val name = cleanCallName(m.groupValues[1])
             if (name.isNotBlank() && name !in setOf("karo", "kar do", "lagao", "me", "a")) return Cmd.Call(name)
         }
 
@@ -375,8 +439,8 @@ object Parser {
         }
 
         if (Regex("""\b(battery|charge|charging)\b""").containsMatchIn(t)) return Cmd.Battery
-        if (Regex("""\b(time|samay|baje|bje|baj gaye|baj rahe)\b""").containsMatchIn(t)) return Cmd.Time
-        if (Regex("""\b(date|tarikh|tareekh|taarikh|kaun sa din|konsa din|kya din)\b""").containsMatchIn(t)) return Cmd.Date
+        if (Regex("""\b(time|samay|waqt|vakt|baje|bje|baj gaye|baj rahe)\b""").containsMatchIn(t)) return Cmd.Time
+        if (Regex("""\b(date|tarikh|tareekh|taarikh|kaun sa din|konsa din|kya din|what day|which day|day is it|day today|kaun sa vaar)\b""").containsMatchIn(t)) return Cmd.Date
 
         // "X chalao" — pehle app, na mile toh gaana
         runSuffix.find(t)?.let { m ->
@@ -385,13 +449,12 @@ object Parser {
         }
 
         // Chhoti baat-cheet
-        if (Regex("""kaisi ho|kaise ho|how are you|kya haal""").containsMatchIn(t)) return Cmd.Chat("how")
-        if (Regex("""kaun ho|your name|tumhara naam|aapka naam|who are you""").containsMatchIn(t)) return Cmd.Chat("who")
+        if (Regex("""kaisi ho|kaise ho|how are you|how are u|how r u|how're you|how do you do|what'?s up|kya haal|sab theek""").containsMatchIn(t)) return Cmd.Chat("how")
+        if (Regex("""kaun ho|your name|tumhara naam|aapka naam|who are you|who r u""").containsMatchIn(t)) return Cmd.Chat("who")
         if (Regex("""thank|shukriya|dhanyavad""").containsMatchIn(t)) return Cmd.Chat("thanks")
-        if (Regex("""^(bye|good ?bye|tata|so jao|chup|chup raho|bas|bas karo|band karo|band kar do|kuch nahi|kuchh nahi|rehne do|cancel|nahi)$""").containsMatchIn(t)) return Cmd.Chat("bye")
-        if (Regex("""^(hello|hi|hey|namaste|namaskar)$""").containsMatchIn(t)) return Cmd.Chat("hello")
+        if (Regex("""^(bye|good ?bye|tata|so jao|chup|chup raho|bas|bas karo|band karo|band kar do|kuch nahi|kuchh nahi|rehne do|cancel|nahi|no|nothing|never ?mind|that'?s all|that is all|leave it|go to sleep|be quiet|chhodo|chodo|jane do)$""").containsMatchIn(t)) return Cmd.Chat("bye")
+        if (Regex("""^(hello|hi+|hey|hello there|namaste|namaskar|good (morning|afternoon|evening|night)|ram ram)$""").containsMatchIn(t)) return Cmd.Chat("hello")
         if (Regex("""kya kar sakti|kya kya kar|what can you do|\bhelp\b|madad""").containsMatchIn(t)) return Cmd.Chat("help")
-        if (Regex("""\b(joke|chutkula|chutkule)\b""").containsMatchIn(t)) return Cmd.Chat("joke")
 
         return Cmd.Unknown(t)
     }

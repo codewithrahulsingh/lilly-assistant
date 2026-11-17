@@ -149,4 +149,93 @@ class ParserTest {
         assertEquals(0, Parser.contactScore("rahul", "Priya Sharma"))
         assertTrue(Parser.contactScore("rahul", "Rahul Singh") > Parser.contactScore("rahul", "Rahulkumar"))
     }
+
+    // ---------- Teeno bhashaon me ek hi kaam ----------
+
+    @Test fun sameCommandInThreeLanguages() {
+        // English
+        assertEquals(Cmd.Call("rohit"), p("Can you call Rohit please"))
+        assertEquals(Cmd.Call("mom"), p("call my mom"))
+        assertEquals(Cmd.Call("rohit"), p("make a call to Rohit"))
+        assertEquals(Cmd.Call("papa"), p("give papa a call"))
+        // Hinglish
+        assertEquals(Cmd.Call("rohit"), p("Rohit ko call lagao"))
+        assertEquals(Cmd.Call("mummy"), p("zara mummy ko phone karo"))
+        assertEquals(Cmd.Call("papa"), p("papa se baat karao"))
+        // Hindi lipi
+        assertEquals(Cmd.Call("mammi"), p("मम्मी को फोन लगाओ"))
+        assertEquals(Cmd.Call("rohit"), p("कॉल रोहित"))
+    }
+
+    @Test fun englishCommands() {
+        assertEquals(Cmd.OpenApp("camera"), p("could you open the camera"))
+        assertEquals(Cmd.OpenApp("instagram"), p("go to Instagram"))
+        assertEquals(Cmd.Torch(true), p("turn on the flashlight"))
+        assertEquals(Cmd.Torch(false), p("switch off the torch please"))
+        assertEquals(Cmd.Torch(true), p("turn on the light"))
+        assertEquals(Cmd.Time, p("what time is it"))
+        assertEquals(Cmd.Date, p("what day is it today"))
+        assertEquals(Cmd.Date, p("what's the date today"))
+        assertEquals(Cmd.Battery, p("how much battery is left"))
+        assertEquals(Cmd.Volume("up"), p("turn up the volume"))
+        assertEquals(Cmd.Volume("up"), p("louder"))
+        assertEquals(Cmd.Volume("down"), p("lower the volume"))
+        assertEquals(Cmd.Volume("down"), p("turn it down"))
+        assertEquals(Cmd.Media("next"), p("skip this song"))
+        assertEquals(Cmd.Media("next"), p("change the song"))
+        assertEquals(Cmd.Media("pause"), p("stop the music"))
+        assertEquals(Cmd.Media("pause"), p("pause the song"))
+        assertEquals(Cmd.PlayMusic("shape of you"), p("please play Shape of You"))
+        assertEquals(Cmd.PlayMusic("arijit singh"), p("listen to Arijit Singh"))
+        assertEquals(Cmd.PlayMusic("kesariya", "youtube"), p("search Kesariya on YouTube"))
+        assertEquals(Cmd.Chat("how"), p("how are you"))
+        assertEquals(Cmd.Chat("who"), p("what's your name"))
+        assertEquals(Cmd.Chat("joke"), p("tell me a joke"))
+        assertEquals(Cmd.Chat("bye"), p("never mind"))
+        assertEquals(Cmd.Chat("hello"), p("good morning"))
+        assertEquals(Cmd.Chat("help"), p("what can you do"))
+        assertTrue(p("who is the prime minister of india") is Cmd.Unknown)
+    }
+
+    @Test fun hindiScriptCommands() {
+        assertEquals(Cmd.Time, p("टाइम क्या हुआ है"))
+        assertEquals(Cmd.Time, p("समय बताओ"))
+        assertEquals(Cmd.Date, p("आज की तारीख क्या है"))
+        assertEquals(Cmd.Battery, p("बैटरी कितनी है"))
+        assertEquals(Cmd.Volume("up"), p("आवाज बढ़ाओ"))
+        assertEquals(Cmd.Volume("down"), p("वॉल्यूम कम करो"))
+        assertEquals(Cmd.Media("next"), p("अगला गाना"))
+        assertEquals(Cmd.Media("pause"), p("गाना बंद करो"))
+        assertEquals(Cmd.Torch(false), p("टॉर्च बंद करो"))
+        assertEquals(Cmd.Chat("how"), p("कैसी हो"))
+        assertEquals(Cmd.Chat("thanks"), p("धन्यवाद"))
+    }
+
+    @Test fun hinglishCommands() {
+        assertEquals(Cmd.Time, p("abhi time kya hua hai"))
+        assertEquals(Cmd.Date, p("aaj kaun sa din hai"))
+        assertEquals(Cmd.Volume("max"), p("awaaz poori kar do"))
+        assertEquals(Cmd.Media("next"), p("gaana badlo"))
+        assertEquals(Cmd.Media("next"), p("doosra gaana chalao"))
+        assertEquals(Cmd.PlayMusic("kesariya"), p("kesariya sunna hai"))
+        assertEquals(Cmd.Torch(true), p("light jalao"))
+        assertEquals(Cmd.Chat("joke"), p("ek chutkula sunao"))
+        assertEquals(Cmd.Chat("bye"), p("rehne do"))
+    }
+
+    @Test fun languageDetection() {
+        // English (Google ise Hindi lipi me likh de tab bhi)
+        assertTrue(Parser.isEnglish("call Rohit"))
+        assertTrue(Parser.isEnglish("what time is it"))
+        assertTrue(Parser.isEnglish("hey lilly open YouTube"))
+        assertTrue(Parser.isEnglish("ओपन यूट्यूब"))
+        assertTrue(Parser.isEnglish("play Kesariya on Spotify"))
+        // Hinglish / Hindi
+        assertTrue(!Parser.isEnglish("Rohit ko call karo"))
+        assertTrue(!Parser.isEnglish("YouTube kholo"))
+        assertTrue(!Parser.isEnglish("time kya hua"))
+        assertTrue(!Parser.isEnglish("राहुल को कॉल करो"))
+        assertTrue(!Parser.isEnglish("बैटरी कितनी है"))
+        assertTrue(!Parser.isEnglish(""))
+    }
 }

@@ -45,7 +45,7 @@ class OrbView(context: Context) : View(context) {
 
     init {
         setLayerType(LAYER_TYPE_HARDWARE, null)
-        contentDescription = "Lilly ko activate karein"
+        contentDescription = "Activate Lilly"
     }
 
     override fun onAttachedToWindow() {

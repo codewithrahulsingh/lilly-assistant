@@ -17,12 +17,16 @@ object AiChat {
     data class Answer(val spoken: String, val display: String)
 
     private const val SYSTEM =
-        "Tum Lilly ho — Rahul ki personal voice assistant, ek dostana ladki ki awaaz. " +
-            "Tumhara jawab zor se bol kar sunaya jaayega, isliye 1 se 3 chhote vakya me, seedha aur garmjoshi se jawab do. " +
-            "Koi markdown, list, emoji ya link mat likho. " +
-            "Jawab THEEK is format me do, do hisse ||| se alag: pehle saral Hindi Devanagari lipi me (bolne ke liye), " +
-            "phir wahi baat Roman Hinglish me (screen par dikhane ke liye). " +
-            "Udaharan: मैं ठीक हूँ, आप बताओ?|||Main theek hoon, aap batao?"
+        "You are Lilly, Rahul's personal voice assistant, with a warm, friendly female voice. " +
+            "Your reply is read aloud, so answer directly in one to three short sentences. " +
+            "Never use markdown, lists, emojis or links. " +
+            "Reply in the same language as the user's latest message, and use EXACTLY this format: " +
+            "two parts separated by |||. " +
+            "If the user wrote in English: the reply in plain English, then |||, then the same English reply again. " +
+            "If the user wrote in Hindi or Hinglish (Hindi in Roman letters): the reply in simple Hindi in Devanagari " +
+            "script (for speaking), then |||, then the same reply in Roman Hinglish (for the screen). " +
+            "Example 1: I'm doing well, how about you?|||I'm doing well, how about you? " +
+            "Example 2: मैं ठीक हूँ, आप बताओ?|||Main theek hoon, aap batao?"
 
     /** code: HTTP status (0 = internet/connection), detail: server ka apna message */
     class AiError(val code: Int, val detail: String) : Exception("HTTP $code $detail")
@@ -33,16 +37,16 @@ object AiChat {
         val d = err?.detail ?: ""
         return when {
             e is java.net.UnknownHostException || e is java.net.ConnectException ->
-                Pair("Internet nahi chal raha", "इंटरनेट नहीं चल रहा")
+                Pair("No internet connection", "इंटरनेट नहीं चल रहा")
             e is java.net.SocketTimeoutException ->
-                Pair("AI ne jawab dene me bahut der kar di, dobara boliye", "ए आई ने जवाब देने में बहुत देर कर दी, दोबारा बोलिए")
-            err == null -> Pair("AI se jawab nahi mila (${e?.javaClass?.simpleName})", "ए आई से जवाब नहीं मिला")
+                Pair("The AI took too long to answer, please try again", "ए आई ने जवाब देने में बहुत देर कर दी, दोबारा बोलिए")
+            err == null -> Pair("I couldn't get an answer from the AI (${e?.javaClass?.simpleName})", "ए आई से जवाब नहीं मिला")
             err.code == 429 ->
-                Pair("AI ki free limit abhi khatam hai, thodi der baad boliye", "ए आई की फ्री लिमिट अभी खत्म है, थोड़ी देर बाद बोलिए")
+                Pair("The free AI limit is used up for now, please try again in a little while", "ए आई की फ्री लिमिट अभी खत्म है, थोड़ी देर बाद बोलिए")
             err.code == 401 || err.code == 403 || d.contains("API key", true) ->
-                Pair("AI key galat hai ya band hai (${err.code}). App me key dobara paste kijiye", "ए आई की गलत है। ऐप में की दोबारा पेस्ट कीजिए")
-            err.code == 404 -> Pair("Is key par koi AI model nahi mila (404)", "इस की पर कोई ए आई मॉडल नहीं मिला")
-            err.code >= 500 -> Pair("AI server abhi busy hai (${err.code}), dobara boliye", "ए आई सर्वर अभी बिज़ी है, दोबारा बोलिए")
+                Pair("The AI key is wrong or disabled (${err.code}). Please paste the key again in the app", "ए आई की गलत है। ऐप में की दोबारा पेस्ट कीजिए")
+            err.code == 404 -> Pair("No AI model is available for this key (404)", "इस की पर कोई ए आई मॉडल नहीं मिला")
+            err.code >= 500 -> Pair("The AI server is busy right now (${err.code}), please try again", "ए आई सर्वर अभी बिज़ी है, दोबारा बोलिए")
             else -> Pair("AI error ${err.code}: ${d.take(120)}", "ए आई से जवाब नहीं मिला")
         }
     }
