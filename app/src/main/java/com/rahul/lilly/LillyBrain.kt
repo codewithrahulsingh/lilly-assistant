@@ -35,13 +35,21 @@ class LillyBrain(private val ctx: Context) {
         val spoken: String,
         val action: (() -> Unit)? = null,
         val askAi: String? = null,
-        val endChat: Boolean = false
+        val endChat: Boolean = false,
+        /** Kaam nahi hua (naam/app nahi mila, samajh nahi aaya) — seekhne ke liye */
+        val failed: Boolean = false
     )
 
     private data class Contact(val name: String, val number: String)
 
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
     private val audio get() = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    /** Lilly ki seekh (phone par hi save) */
+    val learner = Learner(
+        load = { prefs.getString("learned", null) },
+        save = { prefs.edit().putString("learned", it).apply() }
+    )
 
     private fun <T> pick(vararg options: T): T = options.random()
 
@@ -57,12 +65,32 @@ class LillyBrain(private val ctx: Context) {
 
     // ---------- Main ----------
 
-    fun handle(rawText: String, alternatives: List<String>): Reply {
+    fun handle(rawText: String, alternatives: List<String>, allowAi: Boolean = true): Reply {
+        learner.reload() // app ki screen se kuch bhulaya gaya ho toh
         // Pehla = sabse pakka; baaki Google ke doosre andaze (galat sune naam pakadne ke liye)
-        val texts = (listOf(rawText) + alternatives)
+        val heard = (listOf(rawText) + alternatives)
             .map { Parser.stripWakeWord(Parser.roman(it)) }
             .filter { it.isNotBlank() }.distinct()
-        if (texts.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true)
+        if (heard.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true, failed = true)
+        // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
+        val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
+        val reply = decide(texts, allowAi)
+        if (reply.failed) learner.noteFailure(heard.first())
+        else if (reply.action != null) learner.noteSuccess(texts.first())
+        return reply
+    }
+
+    /**
+     * AI ne kisi nayi baat ko phone ki command samjha ("boss ko ghanti maaro" -> "call boss").
+     * Chal gayi toh yaad rakho — agli baar bina AI ke, turant.
+     */
+    fun handleFromAi(question: String, command: String): Reply {
+        val r = handle(command, emptyList(), allowAi = false)
+        if (r.action != null && !r.failed) learner.teach(question, command, taught = false)
+        return r
+    }
+
+    private fun decide(texts: List<String>, allowAi: Boolean): Reply {
         val cmds = texts.map { Parser.parse(it) }
         val top = cmds.first()
         val main = if (top !is Cmd.Unknown) top else cmds.firstOrNull {
@@ -80,15 +108,36 @@ class LillyBrain(private val ctx: Context) {
             Cmd.Date -> dateReply()
             Cmd.Battery -> batteryReply()
             is Cmd.Chat -> chatReply(main.topic)
+            is Cmd.Teach -> teachReply(main)
             is Cmd.Unknown -> {
-                if (hasAiKey()) Reply("Thinking…", "", askAi = texts.first())
+                if (allowAi && hasAiKey()) Reply("Thinking…", "", askAi = texts.first())
                 else Reply(
-                    "I can't do that yet. Turn on AI chat in the Lilly app and I can answer anything",
-                    "ये मुझे अभी नहीं आता। हर बात का जवाब देने के लिए लिली ऐप में ए आई बातचीत ऑन कीजिए",
-                    endChat = true
+                    if (allowAi) "I can't do that yet. Turn on AI chat in the Lilly app and I can answer anything"
+                    else "I understood, but I couldn't do that on the phone",
+                    "ये मुझे अभी नहीं आता",
+                    endChat = true, failed = true
                 )
             }
         }
+    }
+
+    // ---------- Sikhana ----------
+
+    private fun teachReply(t: Cmd.Teach): Reply {
+        val action = Parser.parse(t.action)
+        if (action is Cmd.Unknown || action is Cmd.Teach || t.phrase.isBlank()) {
+            return Reply(
+                "I didn't understand what to do. Try: When I say good night, turn off the torch",
+                "मुझे समझ नहीं आया क्या करना है। ऐसे बोलिए: जब मैं गुड नाइट बोलूँ तो टॉर्च बंद करना",
+                endChat = true, failed = true
+            )
+        }
+        learner.teach(t.phrase, t.action)
+        return Reply(
+            "Got it! When you say “${t.phrase}”, I'll ${t.action}",
+            "ठीक है, याद रख लिया। जब आप ${t.phrase} बोलेंगे, मैं वो कर दूँगी",
+            endChat = true
+        )
     }
 
     // ---------- Baat-cheet (offline) ----------
@@ -155,12 +204,18 @@ class LillyBrain(private val ctx: Context) {
                 { openAppSettings() }, endChat = true
             )
         }
-        val c = findContact(targets, favOnly)
+        // Pehle se seekha hua naam ("mummy" -> "Mummy Jio") sabse aage
+        val learned = targets.firstNotNullOfOrNull { learner.contactFor(it) }
+        val queries = if (learned != null) listOf(learned) + targets else targets
+        val c = findContact(queries, favOnly)
             ?: return if (favOnly) Reply(
                 "On the lock screen I can only call your favourite contacts. $target is not in favourites",
                 "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला", endChat = true
-            ) else Reply("I couldn't find a contact named $target", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true)
-        return Reply("Calling ${c.name}", "${c.name} को कॉल कर रही हूँ", { startCall(c.number) }, endChat = true)
+            ) else Reply("I couldn't find a contact named $target", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true, failed = true)
+        return Reply("Calling ${c.name}", "${c.name} को कॉल कर रही हूँ", {
+            learner.rememberContact(target, c.name)
+            startCall(c.number)
+        }, endChat = true)
     }
 
     private fun startCall(number: String) {
@@ -207,7 +262,9 @@ class LillyBrain(private val ctx: Context) {
         for ((qi, q) in queries.withIndex()) {
             for (c in all) {
                 // Pehle andaze ko thoda zyada bharosa
-                val score = Parser.contactScore(q, c.name) - qi
+                val base = Parser.contactScore(q, c.name)
+                // Jise aap zyada call karte ho, barabar match par wahi jeete
+                val score = if (base > 0) base - qi + learner.contactBonus(c.name) else 0
                 if (score > bestScore) {
                     bestScore = score
                     best = c
@@ -291,34 +348,58 @@ class LillyBrain(private val ctx: Context) {
         if (query.isBlank()) return mediaReply("resume")
         val shown = query.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
 
-        if (app == "youtube" && installed(youtube)) return youtubeReply(query, shown)
-        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .putExtra(SearchManager.QUERY, query)
-            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-        // YouTube par pehla result seedha bajta hai; Spotify bahar ke app se sirf search kholta hai
-        if (installed(youtube)) return youtubeReply(query, shown)
+        // Jo app bola wahi; na bola ho toh jo aapne pichhli baar khud chuna tha
+        val want = app.ifBlank { learner.musicApp ?: "" }
+        val remember = { if (app.isNotBlank()) learner.setMusicApp(app) }
+
+        if (want == "spotify" && installed(spotify)) return spotifyReply(query, shown, remember)
+        if (want == "youtube" && installed(youtube)) return youtubeReply(query, shown, remember)
+        if (app == "spotify") {
+            return Reply("Spotify isn't installed on this phone", "इस फ़ोन में स्पॉटिफाई नहीं है", endChat = true, failed = true)
+        }
+        if (installed(youtube)) return youtubeReply(query, shown, remember)
         if (installed(ytMusic)) {
             // YouTube Music ye intent milte hi gaana chala deta hai
-            i.setPackage(ytMusic)
+            val i = searchIntent(query).setPackage(ytMusic)
             return Reply("Playing $shown on YouTube Music", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
                 openExternal(i, "YouTube Music")
             }, endChat = true)
         }
-        if (installed(spotify)) {
-            i.setPackage(spotify)
-            return Reply("Searching $shown on Spotify", "स्पॉटिफाई पर $shown ढूँढ रही हूँ", {
-                openExternal(i, "Spotify")
-            }, endChat = true)
-        }
+        if (installed(spotify)) return spotifyReply(query, shown, remember)
+        val i = searchIntent(query)
         if (i.resolveActivity(ctx.packageManager) != null) {
             return Reply("Playing $shown", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
         }
-        return Reply("Please install Spotify or YouTube to play songs", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true)
+        return Reply("Please install Spotify or YouTube to play songs", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true, failed = true)
     }
 
+    private fun searchIntent(query: String) = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+        .putExtra(SearchManager.QUERY, query)
+        .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+
+    /**
+     * Spotify: "play from search" bhejo. Spotify band ho toh pehli baar aksar sirf search dikhata hai,
+     * isliye khulne ke baad dekhte hain gaana baja ya nahi — nahi baja toh wahi dobara bhejte hain.
+     */
+    private fun spotifyReply(query: String, shown: String, remember: () -> Unit): Reply =
+        Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
+            remember()
+            val i = searchIntent(query).setPackage(spotify)
+            openExternal(i, "Spotify")
+            val h = Handler(Looper.getMainLooper())
+            for (delay in listOf(3500L, 7500L)) {
+                h.postDelayed({
+                    if (!audio.isMusicActive && Settings.canDrawOverlays(ctx)) {
+                        try { ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { }
+                    }
+                }, delay)
+            }
+        }, endChat = true)
+
     /** YouTube: pehla result dhoondh kar seedha wahi video chalao (sirf search par na ruke) */
-    private fun youtubeReply(query: String, shown: String): Reply =
+    private fun youtubeReply(query: String, shown: String, remember: () -> Unit = {}): Reply =
         Reply("Playing $shown on YouTube", "यूट्यूब पर $shown चला रही हूँ", {
+            remember()
             Thread {
                 val id = MusicControl.firstYouTubeVideo("$query song")
                 Handler(Looper.getMainLooper()).post {
@@ -380,11 +461,17 @@ class LillyBrain(private val ctx: Context) {
         var bestPkg: String? = null
         var bestLabel = ""
         var bestScore = 0
+        // Pehle se seekha hua app ("insta" -> Instagram)
+        names.firstNotNullOfOrNull { learner.appFor(it) }?.let { known ->
+            for ((p, l) in apps) {
+                if (p == known) { bestPkg = p; bestLabel = l; bestScore = Int.MAX_VALUE; break }
+            }
+        }
         for ((qi, raw) in names.withIndex()) {
             for (variant in Parser.appNames(raw)) {
                 for ((pkg, label) in apps) {
                     // barabar score par chhota naam jeete ("YouTube" > "YouTube Music")
-                    val score = Parser.appScore(variant, label) * 100 - qi * 150 - label.length
+                    val score = Parser.appScore(variant, label) * 100 - qi * 150 - label.length + learner.appBonus(pkg) * 100
                     if (Parser.appScore(variant, label) >= 50 && score > bestScore) {
                         bestScore = score
                         bestPkg = pkg
@@ -398,7 +485,7 @@ class LillyBrain(private val ctx: Context) {
         if (pkg == null) {
             if (orMusic) return playMusic(names.first(), "")
             val said = names.first().replaceFirstChar { it.uppercase() }
-            return Reply("I couldn't find an app called $said", "$said नाम का ऐप नहीं मिला", endChat = true)
+            return Reply("I couldn't find an app called $said", "$said नाम का ऐप नहीं मिला", endChat = true, failed = true)
         }
         if (!isAppAllowed(pkg)) {
             return Reply(
@@ -408,7 +495,12 @@ class LillyBrain(private val ctx: Context) {
         }
         val intent = pm.getLaunchIntentForPackage(pkg)
             ?: return Reply("I couldn't open $bestLabel", "$bestLabel नहीं खुल पाया", endChat = true)
-        return Reply("Opening $bestLabel", "$bestLabel खोल रही हूँ", { openExternal(intent, bestLabel) }, endChat = true)
+        val said = names.first()
+        val label = bestLabel
+        return Reply("Opening $label", "$label खोल रही हूँ", {
+            learner.rememberApp(said, pkg, label)
+            openExternal(intent, label)
+        }, endChat = true)
     }
 
     /**

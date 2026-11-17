@@ -14,7 +14,8 @@ object AiChat {
     /** role = "user" ya "assistant" */
     data class Turn(val role: String, val text: String)
 
-    data class Answer(val spoken: String, val display: String)
+    /** command != null: AI ne baat ko phone ki command samjha (jaise "call rohit") */
+    data class Answer(val spoken: String, val display: String, val command: String? = null)
 
     private const val SYSTEM =
         "You are Lilly, Rahul's personal voice assistant, with a warm, friendly female voice. " +
@@ -26,7 +27,15 @@ object AiChat {
             "If the user wrote in Hindi or Hinglish (Hindi in Roman letters): the reply in simple Hindi in Devanagari " +
             "script (for speaking), then |||, then the same reply in Roman Hinglish (for the screen). " +
             "Example 1: I'm doing well, how about you?|||I'm doing well, how about you? " +
-            "Example 2: मैं ठीक हूँ, आप बताओ?|||Main theek hoon, aap batao?"
+            "Example 2: मैं ठीक हूँ, आप बताओ?|||Main theek hoon, aap batao? " +
+            "IMPORTANT: if the message asks the phone to DO something, do not use that format. Instead reply with " +
+            "only one line: CMD: <command>, written in simple English using one of these forms: " +
+            "call <contact name> | open <app name> | play <song or artist> | play <song or artist> on spotify | " +
+            "play <song or artist> on youtube | pause | next song | previous song | volume up | volume down | mute | " +
+            "torch on | torch off | what time is it | what is the date | battery. " +
+            "Keep contact, app and song names exactly as the user said them, in Roman letters. " +
+            "Examples: 'boss ko ghanti maaro' -> CMD: call boss. 'kuch romantic sunao spotify pe' -> CMD: play romantic songs on spotify. " +
+            "'andhera hai roshni karo' -> CMD: torch on. Use CMD only for these phone actions."
 
     /** code: HTTP status (0 = internet/connection), detail: server ka apna message */
     class AiError(val code: Int, val detail: String) : Exception("HTTP $code $detail")
@@ -55,6 +64,11 @@ object AiChat {
         // Copy-paste me aayi space / nayi line hata do (warna request hi nahi jaati)
         val key = keyRaw.filter { !it.isWhitespace() }
         val raw = if (key.startsWith("sk-ant-")) anthropic(key, history, question) else gemini(key, history, question)
+        // "CMD: call rohit" — phone ka kaam
+        Regex("""^\s*CMD\s*:\s*(.+)""", RegexOption.IGNORE_CASE).find(raw.trim())?.let { m ->
+            val cmd = m.groupValues[1].lines().first().trim().trim('"', '\'', '.', '`').trim()
+            if (cmd.isNotBlank()) return Answer("", "", command = cmd)
+        }
         val parts = raw.trim().split("|||")
         val spoken = parts[0].trim()
         val display = (parts.getOrNull(1)?.trim()).takeUnless { it.isNullOrBlank() } ?: Parser.roman(spoken)

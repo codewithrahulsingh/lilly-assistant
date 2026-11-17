@@ -37,6 +37,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var voiceValue: TextView
     private lateinit var aiValue: TextView
     private lateinit var lockPopupValue: TextView
+    private lateinit var learnedValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -192,6 +193,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r7 = row(col)
         lockPopupValue = card(r7, "🔓", "Orb on lock screen") { lockPopupSetup() }
+        learnedValue = card(r7, "🧠", "What Lilly learned") { showLearned() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -208,6 +210,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun refreshCards() {
         aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — turn on to get answers to anything" else "ON ✓"
         lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap to allow"
+        val learnedCount = learner().items().size
+        learnedValue.text = if (learnedCount == 0) "Nothing yet — tap to see how" else "$learnedCount things learned"
         val allowed = prefs.getStringSet("allowed_apps", null)
         allowedValue.text = if (allowed == null) "All apps allowed" else "${allowed.size} apps allowed"
         voiceValue.text =
@@ -465,6 +469,51 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun learner() = Learner(
+        load = { prefs.getString("learned", null) },
+        save = { prefs.edit().putString("learned", it).apply() }
+    )
+
+    private val teachHelp =
+        "Lilly learns by herself as you use her:\n\n" +
+            "• Names you call and apps you open often are matched first\n" +
+            "• If a command fails and you say it another way, she remembers the first way too\n" +
+            "• With AI chat on, new ways of saying things are understood once and then remembered\n" +
+            "• \"Play … on Spotify\" makes Spotify your default for songs\n\n" +
+            "You can also teach her directly:\n" +
+            "\"When I say good night, turn off the torch\"\n" +
+            "\"Jab main boss bolun to Rohit ko call karna\"\n\n" +
+            "Everything she learns stays on this phone."
+
+    private fun showLearned() {
+        val l = learner()
+        val items = l.items()
+        val b = AlertDialog.Builder(this).setTitle("🧠 What Lilly learned")
+        if (items.isEmpty()) {
+            b.setMessage(teachHelp).setPositiveButton("OK", null).show()
+            return
+        }
+        b.setItems(items.map { it.text }.toTypedArray()) { _, which ->
+            val item = items[which]
+            AlertDialog.Builder(this)
+                .setTitle("Forget this?")
+                .setMessage(item.text)
+                .setPositiveButton("Forget") { _, _ -> l.forget(item); refreshCards(); showLearned() }
+                .setNegativeButton("Keep", null).show()
+        }
+            .setPositiveButton("Close", null)
+            .setNeutralButton("How it learns") { _, _ ->
+                AlertDialog.Builder(this).setTitle("How Lilly learns").setMessage(teachHelp).setPositiveButton("OK", null).show()
+            }
+            .setNegativeButton("Forget all") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("Forget everything Lilly learned?")
+                    .setPositiveButton("Forget all") { _, _ -> l.clear(); refreshCards() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+            .show()
+    }
+
     private fun batterySettings() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         if (pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -484,6 +533,7 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "📱  \"Open YouTube\" / \"WhatsApp kholo\"",
                     "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
                     "🎵  \"Play Kesariya on YouTube\" / \"YouTube par Kesariya chalao\"",
+                    "🎵  \"Play Kesariya on Spotify\" / \"Spotify par Kesariya chalao\"",
                     "⏯  \"Pause\" / \"Next song\" / \"Gaana band karo\"",
                     "🔊  \"Volume up\" / \"Awaaz kam karo\"",
                     "🔋  \"How much battery is left\" / \"Battery kitni hai\"",
@@ -491,7 +541,9 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "🔦  \"Turn on the torch\" / \"Torch band karo\"",
                     "🕒  \"What time is it\" / \"Kitne baje hain\"",
                     "📅  \"What's the date\" / \"Aaj ki date kya hai\"",
-                    "💬  \"How are you\" / \"Kaisi ho\" / \"Thank you\""
+                    "💬  \"How are you\" / \"Kaisi ho\" / \"Thank you\"",
+                    "🧠  \"When I say good night, turn off the torch\"",
+                    "🧠  \"Jab main boss bolun to Rohit ko call karna\""
                 ), null
             )
             .setPositiveButton("OK", null).show()

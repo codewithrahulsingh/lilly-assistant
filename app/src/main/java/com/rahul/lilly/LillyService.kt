@@ -802,6 +802,11 @@ class LillyService : Service() {
             askAi(question)
             return
         }
+        deliver(reply)
+    }
+
+    /** Jawab bolo, phir kaam karo (call, app, gaana…) */
+    private fun deliver(reply: LillyBrain.Reply) {
         sayBi(reply.display, reply.spoken) {
             if (reply.endChat || reply.action != null) {
                 endSession()
@@ -841,6 +846,13 @@ class LillyService : Service() {
                     // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
                     val why = AiChat.explain(failure)
                     sayBi(why.first, why.second) { endSession(); listen(Mode.WAKE) }
+                    return@post
+                }
+                val cmd = result.command
+                if (cmd != null) {
+                    // AI ne samjha ki ye phone ka kaam hai — karo, aur chal gaya toh agli baar ke liye yaad rakho
+                    LillyBus.heard("“${brain.roman(question)}” → $cmd")
+                    deliver(brain.handleFromAi(question, cmd))
                     return@post
                 }
                 aiHistory.add(AiChat.Turn("user", question))

@@ -71,16 +71,16 @@ class ParserTest {
 
     @Test fun music() {
         assertEquals(Cmd.PlayMusic("kesariya"), p("play Kesariya"))
-        assertEquals(Cmd.PlayMusic("kesariya"), p("play Kesariya on Spotify"))
+        assertEquals(Cmd.PlayMusic("kesariya", "spotify"), p("play Kesariya on Spotify"))
         assertEquals(Cmd.PlayMusic("arijit singh"), p("Arijit Singh ke gaane chalao"))
-        assertEquals(Cmd.PlayMusic("tum hi ho"), p("spotify par tum hi ho chalao"))
+        assertEquals(Cmd.PlayMusic("tum hi ho", "spotify"), p("spotify par tum hi ho chalao"))
         assertEquals(Cmd.PlayMusic("tum hi ho"), p("tum hi ho gaana bajao"))
         assertEquals(Cmd.PlayMusic("kesariya"), p("प्ले केसरिया"))
         assertEquals(Cmd.PlayMusic(""), p("play some music"))
         assertEquals(Cmd.PlayMusic("arijit singh", "youtube"), p("youtube pe arijit singh chalao"))
         assertEquals(Cmd.PlayMusic("kesariya", "youtube"), p("play kesariya on youtube"))
-        assertEquals(Cmd.PlayMusic("kesariya"), p("open spotify and play kesariya"))
-        assertEquals(Cmd.PlayMusic("kesariya"), p("स्पॉटिफाई पर केसरिया चलाओ"))
+        assertEquals(Cmd.PlayMusic("kesariya", "spotify"), p("open spotify and play kesariya"))
+        assertEquals(Cmd.PlayMusic("kesariya", "spotify"), p("स्पॉटिफाई पर केसरिया चलाओ"))
         assertEquals(Cmd.OpenApp("kesariya", orMusic = true), p("kesariya chalao"))
     }
 
@@ -237,5 +237,77 @@ class ParserTest {
         assertTrue(!Parser.isEnglish("राहुल को कॉल करो"))
         assertTrue(!Parser.isEnglish("बैटरी कितनी है"))
         assertTrue(!Parser.isEnglish(""))
+    }
+
+    @Test fun spotifyIsKept() {
+        assertEquals(Cmd.PlayMusic("arijit singh", "spotify"), p("Spotify pe Arijit Singh ke gaane chalao"))
+        assertEquals(Cmd.PlayMusic("kesariya", "spotify"), p("Kesariya Spotify par chalao"))
+        assertEquals(Cmd.PlayMusic("kesariya", "spotify"), p("play kesariya in spotify"))
+        assertEquals(Cmd.PlayMusic("kesariya", ""), p("play kesariya"))
+    }
+
+    @Test fun teaching() {
+        assertEquals(Cmd.Teach("good night", "turn off the torch"), p("When I say good night turn off the torch"))
+        assertEquals(Cmd.Teach("good night", "turn off the torch"), p("when I say good night, then turn off the torch"))
+        assertEquals(Cmd.Teach("boss", "call rohit sharma"), p("when i say boss call Rohit Sharma"))
+        assertEquals(Cmd.Teach("gym time", "play workout songs on spotify"), p("When I say gym time play workout songs on Spotify"))
+        assertEquals(Cmd.Teach("boss", "rohit ko call karna"), p("jab main boss bolun to Rohit ko call karna"))
+        assertEquals(Cmd.Teach("so ja", "torch band karo"), p("jab bhi main so ja bolu toh torch band karo"))
+    }
+}
+
+class LearnerTest {
+    private var stored: String? = null
+    private var now = 1_000_000L
+    private fun learner() = Learner({ stored }, { stored = it }, { now })
+
+    @Test fun teachAndRewrite() {
+        val l = learner()
+        assertTrue(l.teach("Good night", "turn off the torch"))
+        assertEquals("turn off the torch", l.rewrite("good night"))
+        assertEquals("turn off the torch", l.rewrite("Hey Lilly, good night!"))
+        assertEquals(null, l.rewrite("good morning"))
+    }
+
+    @Test fun learnsFromRetry() {
+        val l = learner()
+        l.noteFailure("boss ko ghanti maaro")
+        now += 10_000
+        assertTrue(l.noteSuccess("Rohit ko call karo"))
+        assertEquals("rohit ko call karo", l.rewrite("boss ko ghanti maaro"))
+        // Bahut der baad wali command se kuch nahi seekhna
+        l.noteFailure("kuch ajeeb sa")
+        now += 5 * 60_000
+        assertTrue(!l.noteSuccess("time kya hua"))
+        assertEquals(null, l.rewrite("kuch ajeeb sa"))
+    }
+
+    @Test fun contactsNeedTwoUses() {
+        val l = learner()
+        l.rememberContact("mummy", "Mummy Jio")
+        assertEquals(null, l.contactFor("mummy"))
+        l.rememberContact("Mummy", "Mummy Jio")
+        assertEquals("Mummy Jio", l.contactFor("mummy"))
+        assertTrue(l.contactBonus("Mummy Jio") > l.contactBonus("Papa"))
+        // Doosra contact aaya toh ginti dobara shuru
+        l.rememberContact("mummy", "Mummy Airtel")
+        assertEquals(null, l.contactFor("mummy"))
+    }
+
+    @Test fun savesAndLoads() {
+        val a = learner()
+        a.teach("good night", "torch off")
+        a.rememberApp("insta", "com.instagram.android", "Instagram")
+        a.rememberApp("insta", "com.instagram.android", "Instagram")
+        a.setMusicApp("spotify")
+        val b = learner()
+        assertEquals("torch off", b.rewrite("good night"))
+        assertEquals("com.instagram.android", b.appFor("insta"))
+        assertEquals("spotify", b.musicApp)
+        assertEquals(3, b.items().size)
+        b.forget(b.items().first { it.kind == "p" })
+        assertEquals(null, learner().rewrite("good night"))
+        b.clear()
+        assertEquals(0, learner().items().size)
     }
 }

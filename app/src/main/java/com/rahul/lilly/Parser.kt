@@ -11,7 +11,7 @@ sealed class Cmd {
     object Battery : Cmd()
     /** orMusic = true: "X chalao" — app na mile toh X ko gaana maan lo */
     data class OpenApp(val name: String, val orMusic: Boolean = false) : Cmd()
-    /** app: "" (Spotify/default) ya "youtube" */
+    /** app: "" (jo pasand ho), "spotify" ya "youtube" */
     data class PlayMusic(val query: String, val app: String = "") : Cmd()
     /** action: pause, resume, next, previous */
     data class Media(val action: String) : Cmd()
@@ -19,6 +19,8 @@ sealed class Cmd {
     data class Volume(val action: String) : Cmd()
     /** topic: how, who, thanks, bye, hello, help, joke */
     data class Chat(val topic: String) : Cmd()
+    /** "When I say good night, turn off the torch" — phrase sikhana */
+    data class Teach(val phrase: String, val action: String) : Cmd()
     data class Unknown(val text: String) : Cmd()
 }
 
@@ -363,6 +365,53 @@ object Parser {
         return words.none { it in hindiMarkers }
     }
 
+    // ---------- Sikhana ----------
+
+    private val teachHi = Regex(
+        """^(?:jab|jab bhi)\s+(?:main|mai|mein|me|hum)\s+(.+?)\s+(?:bolu|bolun|boloon|bolu na|bolta hoon|bolti hoon|bolunga|kahu|kahun|kahoon)""" +
+            """(?:\s+(?:to|toh|tab|tab tum|to tum|toh tum))?\s+(.+)$"""
+    )
+    private val teachEn = Regex("""^(?:when|whenever|if)\s+i\s+(?:say|tell you)\s+(.+)$""")
+    private val actionStarters = setOf(
+        "call", "phone", "dial", "ring", "open", "launch", "start", "play", "pause", "stop", "resume",
+        "turn", "switch", "skip", "next", "previous", "mute", "unmute", "volume", "torch", "flashlight",
+        "what", "what's", "tell", "show", "increase", "decrease", "lower", "raise", "go", "put", "listen", "search", "battery"
+    )
+
+    private fun isAction(a: String): Boolean {
+        val c = parse(a)
+        return c !is Cmd.Unknown && c !is Cmd.Teach && c !is Cmd.Chat
+    }
+
+    private fun teachCmd(t: String): Cmd.Teach? {
+        teachHi.find(t)?.let { m ->
+            val phrase = m.groupValues[1].trim()
+            val action = m.groupValues[2].trim()
+            val stripped = action.replace(Regex("""\s+(?:karna|kar dena|kardena|karo|kar do)$"""), "").trim()
+            val best = listOf(action, stripped).firstOrNull { it.isNotBlank() && isAction(it) } ?: action
+            if (phrase.isNotBlank()) return Cmd.Teach(phrase, best)
+        }
+        teachEn.find(t)?.let { m ->
+            val w = m.groupValues[1].split(" ").filter { it.isNotBlank() }
+            var fallback: Cmd.Teach? = null
+            for (k in 1 until w.size) {
+                var rest = w.subList(k, w.size)
+                if (rest.first() in setOf("then", "to", "you", "please", "and")) {
+                    rest = rest.drop(1).let { r -> if (r.firstOrNull() == "should") r.drop(1) else r }
+                }
+                if (rest.isEmpty()) continue
+                val action = rest.joinToString(" ")
+                if (!isAction(action)) continue
+                val teach = Cmd.Teach(w.subList(0, k).joinToString(" "), action)
+                // Pehla aisa toota jaha command kisi kaam wale shabd se shuru ho ("turn", "call", "play"…)
+                if (rest.first() in actionStarters || w[k] == "then") return teach
+                if (fallback == null) fallback = teach
+            }
+            if (fallback != null) return fallback
+        }
+        return null
+    }
+
     // ---------- Main: text -> Cmd ----------
 
     private val politeLead = Regex(
@@ -382,6 +431,9 @@ object Parser {
     fun parse(input: String): Cmd {
         val t = normalize(input)
         if (t.isBlank()) return Cmd.Unknown("")
+
+        // Sikhana: "jab main boss bolun to Rohit ko call karna" / "when I say good night turn off the torch"
+        teachCmd(t)?.let { return it }
 
         // Torch
         if (Regex("""\b(torch|flash ?light|flash)\b|\b(turn|switch) (on|off) (the )?lights?\b|\blights? (on|off|jalao|jala do|bujhao|bujha do|band)\b""").containsMatchIn(t)) {
@@ -416,7 +468,7 @@ object Parser {
             val m = re.find(t) ?: continue
             val app = (if (queryFirst) m.groupValues[2] else m.groupValues[1]).lowercase(Locale.ROOT)
             val q = cleanSongQuery(if (queryFirst) m.groupValues[1] else m.groupValues[2])
-            return Cmd.PlayMusic(q, if (app == "youtube") "youtube" else "")
+            return Cmd.PlayMusic(q, if (app == "youtube") "youtube" else "spotify")
         }
 
         // "X kholo" / "open X" — call se pehle, taaki "phone pe kholo" call na ban jaaye
@@ -435,7 +487,8 @@ object Parser {
         // Gaana chalana
         for (p in playPatterns) {
             val m = p.find(t) ?: continue
-            return Cmd.PlayMusic(cleanSongQuery(m.groupValues[1]))
+            val app = if (Regex("""\bspotify\b""").containsMatchIn(t)) "spotify" else ""
+            return Cmd.PlayMusic(cleanSongQuery(m.groupValues[1]), app)
         }
 
         if (Regex("""\b(battery|charge|charging)\b""").containsMatchIn(t)) return Cmd.Battery
