@@ -37,7 +37,6 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var voiceValue: TextView
     private lateinit var aiValue: TextView
     private lateinit var lockPopupValue: TextView
-    private lateinit var musicValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -193,7 +192,6 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r7 = row(col)
         lockPopupValue = card(r7, "🔓", "Orb on lock screen") { lockPopupSetup() }
-        musicValue = card(r7, "🎵", "Song auto-play") { musicSetup() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -210,7 +208,6 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun refreshCards() {
         aiValue.text = if (prefs.getString("ai_key", "").isNullOrBlank()) "OFF — turn on to get answers to anything" else "ON ✓"
         lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap to allow"
-        musicValue.text = if (MusicControl.hasAccess(this)) "Spotify ON ✓" else "Using YouTube — tap for Spotify"
         val allowed = prefs.getStringSet("allowed_apps", null)
         allowedValue.text = if (allowed == null) "All apps allowed" else "${allowed.size} apps allowed"
         voiceValue.text =
@@ -460,40 +457,6 @@ class MainActivity : Activity(), LillyBus.Ui {
             )
             .setPositiveButton("Permission") { _, _ ->
                 tryStart(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            }
-            .setNeutralButton("App info") { _, _ ->
-                tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
-            }
-            .setNegativeButton("Not now", null)
-            .show()
-    }
-
-    private fun musicSetup() {
-        if (MusicControl.hasAccess(this)) {
-            AlertDialog.Builder(this)
-                .setTitle("It's on ✓")
-                .setMessage(
-                    "Now when you say \"Lilly, play Kesariya\", the song starts playing in Spotify by itself.\n\n" +
-                        "For YouTube, say: \"Play Kesariya on YouTube\"."
-                )
-                .setPositiveButton("OK", null).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Play songs in Spotify automatically")
-            .setMessage(
-                "Spotify only opens a search when another app asks; it doesn't start the song. " +
-                    "So for now Lilly plays songs on YouTube.\n\n" +
-                    "To play songs directly in Spotify, turn on \"Lilly\" on the next screen " +
-                    "(Notification access). Lilly doesn't read or send your notifications; " +
-                    "this permission is only used to tell the music app which song to play.\n\n" +
-                    "If you see \"Restricted setting\":\n" +
-                    "1. Tap \"App info\"\n" +
-                    "2. Tap ⋮ (3 dots) at the top → \"Allow restricted settings\"\n" +
-                    "3. Come back, tap \"Permission\" and turn it on"
-            )
-            .setPositiveButton("Permission") { _, _ ->
-                tryStart(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
             .setNeutralButton("App info") { _, _ ->
                 tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))

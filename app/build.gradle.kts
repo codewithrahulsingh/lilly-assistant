@@ -10,8 +10,22 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "3.2"
+        versionCode = 12
+        versionName = "3.3"
+        // Sirf phone wale processor: APK chhoti aur install tez
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+    }
+    // Har build ek hi key se sign ho, taaki nayi APK purani ke upar install ho sake
+    signingConfigs {
+        create("lilly") {
+            storeFile = rootProject.file("lilly.keystore")
+            storePassword = "lilly-app"
+            keyAlias = "lilly"
+            keyPassword = "lilly-app"
+        }
+    }
+    buildTypes {
+        getByName("debug") { signingConfig = signingConfigs.getByName("lilly") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

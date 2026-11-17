@@ -295,31 +295,21 @@ class LillyBrain(private val ctx: Context) {
         val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
             .putExtra(SearchManager.QUERY, query)
             .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-        if (installed(spotify)) {
-            i.setPackage(spotify)
-            if (!MusicControl.hasAccess(ctx)) {
-                // Spotify akela sirf search dikhata hai; gaana khud chalane ke liye ek permission chahiye
-                if (installed(youtube)) return youtubeReply(query, shown)
-                return Reply(
-                    "Searching $shown on Spotify. To play songs automatically, turn on Song auto-play in the Lilly app",
-                    "स्पॉटिफाई पर $shown ढूँढ रही हूँ। गाना खुद चलने के लिए लिली ऐप में गाना ऑटो प्ले ऑन कीजिए",
-                    { openExternal(i, "Spotify") }, endChat = true
-                )
-            }
-            return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
-                openExternal(i, "Spotify")
-                MusicControl.playFromSearch(ctx, spotify, query)
-            }, endChat = true)
-        }
+        // YouTube par pehla result seedha bajta hai; Spotify bahar ke app se sirf search kholta hai
+        if (installed(youtube)) return youtubeReply(query, shown)
         if (installed(ytMusic)) {
             // YouTube Music ye intent milte hi gaana chala deta hai
             i.setPackage(ytMusic)
             return Reply("Playing $shown on YouTube Music", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
                 openExternal(i, "YouTube Music")
-                MusicControl.playFromSearch(ctx, ytMusic, query)
             }, endChat = true)
         }
-        if (installed(youtube)) return youtubeReply(query, shown)
+        if (installed(spotify)) {
+            i.setPackage(spotify)
+            return Reply("Searching $shown on Spotify", "स्पॉटिफाई पर $shown ढूँढ रही हूँ", {
+                openExternal(i, "Spotify")
+            }, endChat = true)
+        }
         if (i.resolveActivity(ctx.packageManager) != null) {
             return Reply("Playing $shown", "$shown चला रही हूँ", { openExternal(i, "Music") }, endChat = true)
         }
