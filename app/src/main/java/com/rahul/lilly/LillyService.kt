@@ -442,9 +442,31 @@ class LillyService : Service() {
 
     private fun testVoice() {
         val back = mode == Mode.WAKE || mode == Mode.STOPPED
-        val sample = if (english) "Hello, I'm Lilly. How does this voice sound?" else "नमस्ते, मैं लिली हूँ। ये आवाज़ कैसी लगी?"
-        say(voiceLabel(), sample) { if (back) listen(Mode.WAKE) }
+        val sample = if (english) "Hi Rahul, I'm Lilly. This is how my voice sounds." else "हाय राहुल, मैं लिली हूँ। मेरी आवाज़ ऐसी है।"
+        if (!realVoice.enabled()) {
+            say(voiceLabel(), sample) { if (back) listen(Mode.WAKE) }
+            return
+        }
+        // Awaaz chunte waqt asli awaaz ka poora intezaar karo; na aaye toh wajah batao
+        handler.removeCallbacks(wakeRunnable)
+        try { recognizer?.cancel() } catch (e: Exception) { }
+        stopVosk()
+        mode = Mode.SPEAKING
+        LillyBus.status("Loading ${realVoice.voice}…")
+        LillyBus.orb(OrbView.State.SPEAKING)
+        val done = {
+            if (mode == Mode.SPEAKING) mode = Mode.WAKE
+            if (back) listen(Mode.WAKE) else restartLater(200)
+        }
+        realVoice.speak(sample,
+            onDone = { LillyBus.status(voiceLabel()); done() },
+            onFallback = {
+                val why = RealVoice.lastError ?: "unknown reason"
+                say("Real voice didn't load, this is the phone voice. Reason: $why", sample) { if (back) listen(Mode.WAKE) }
+            },
+            waitMs = 25_000L, force = true)
     }
+
 
     private var currentUtterance: String? = null
     private val speakTimeout = Runnable { finishSpeaking(currentUtterance) }

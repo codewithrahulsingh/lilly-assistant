@@ -41,12 +41,15 @@ class RealVoice(private val ctx: Context) {
 
         private val MODELS = listOf("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
         private const val URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-        private const val WAIT_MS = 6000L
+        private const val WAIT_MS = 9000L
         private const val MAX_CACHE = 200
 
         /** Limit/galti ke baad kuch der phone ki awaaz se kaam chalao */
         @Volatile private var pausedUntil = 0L
         @Volatile private var goodModel: String? = null
+
+        /** Pichhli baar real awaaz kyun nahi aayi — screen par dikhane ke liye */
+        @Volatile var lastError: String? = null
     }
 
     private val prefs = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
@@ -67,7 +70,10 @@ class RealVoice(private val ctx: Context) {
      * Bolo. onDone = bolna khatam. onFallback = real awaaz nahi mil payi, phone ki awaaz se bolo.
      * Dono me se sirf ek hi chalega.
      */
-    fun speak(text: String, onDone: () -> Unit, onFallback: () -> Unit) {
+    fun speak(
+        text: String, onDone: () -> Unit, onFallback: () -> Unit,
+        waitMs: Long = WAIT_MS, force: Boolean = false
+    ) {
         stop()
         val my = ++token
         val v = voice
@@ -77,16 +83,27 @@ class RealVoice(private val ctx: Context) {
             play(file, my, onDone, onFallback)
             return
         }
-        if (System.currentTimeMillis() < pausedUntil) { onFallback(); return }
+        if (!force && System.currentTimeMillis() < pausedUntil) { onFallback(); return }
 
         var settled = false
         // Zyada der lage toh intezaar mat karao — phone ki awaaz se bol do
         val giveUp = Runnable {
-            if (!settled && my == token) { settled = true; onFallback() }
+            if (!settled && my == token) {
+                settled = true
+                lastError = "Google took more than ${waitMs / 1000} seconds to make the voice"
+                onFallback()
+            }
         }
-        main.postDelayed(giveUp, WAIT_MS)
+        main.postDelayed(giveUp, waitMs)
         Thread {
-            val ok = try { fetch(text, v, file) } catch (e: Exception) { false }
+            val ok = try { fetch(text, v, file) } catch (e: Exception) {
+                lastError = when (e) {
+                    is java.net.UnknownHostException -> "No internet connection"
+                    is java.net.SocketTimeoutException -> "Google took too long to answer"
+                    else -> "${e.javaClass.simpleName}: ${e.message ?: ""}"
+                }
+                false
+            }
             main.post {
                 main.removeCallbacks(giveUp)
                 if (settled || my != token) return@post // der se aaya: agli baar ke liye save ho gaya
@@ -178,6 +195,7 @@ class RealVoice(private val ctx: Context) {
             ).toString()
 
         val models = listOfNotNull(goodModel) + MODELS.filter { it != goodModel }
+        val errors = ArrayList<String>()
         for (model in models) {
             val c = URL("$URL_BASE/$model:generateContent").openConnection() as HttpURLConnection
             try {
@@ -189,19 +207,28 @@ class RealVoice(private val ctx: Context) {
                 c.setRequestProperty("x-goog-api-key", key)
                 c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val code = c.responseCode
-                if (code == 429) {
-                    // Free limit khatam: 15 min phone ki awaaz
-                    pausedUntil = System.currentTimeMillis() + 15 * 60_000L
-                    return false
+                if (code !in 200..299) {
+                    val msg = try {
+                        val err = c.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                        JSONObject(err).optJSONObject("error")?.optString("message") ?: ""
+                    } catch (e: Exception) { "" }
+                    errors.add("$model → HTTP $code ${msg.take(160)}")
+                    lastError = errors.joinToString("\n")
+                    if (code == 401 || code == 403) {
+                        pausedUntil = System.currentTimeMillis() + 30 * 60_000L
+                        return false
+                    }
+                    continue // ye model nahi chala (ya iski limit khatam), agla try karo
                 }
-                if (code == 401 || code == 403) {
-                    pausedUntil = System.currentTimeMillis() + 30 * 60_000L
-                    return false
-                }
-                if (code !in 200..299) continue // ye model nahi chala, agla try karo
                 val res = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val pcm = audioFrom(res) ?: continue
+                val pcm = audioFrom(res)
+                if (pcm == null) {
+                    errors.add("$model → no audio in the reply")
+                    lastError = errors.joinToString("\n")
+                    continue
+                }
                 goodModel = model
+                lastError = null
                 writeWav(out, pcm, rateFrom(res))
                 trimCache()
                 return true
@@ -209,7 +236,9 @@ class RealVoice(private val ctx: Context) {
                 c.disconnect()
             }
         }
-        pausedUntil = System.currentTimeMillis() + 5 * 60_000L
+        // Koi model nahi chala: thodi der phone ki awaaz (limit ho toh zyada der)
+        val limited = errors.any { "HTTP 429" in it }
+        pausedUntil = System.currentTimeMillis() + (if (limited) 15 else 3) * 60_000L
         return false
     }
 

@@ -501,7 +501,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setSingleChoiceItems(labels.toTypedArray(), cur) { _, which ->
                 prefs.edit().putString("real_voice", codes[which]).apply()
                 refreshCards()
-                sendToEngine(LillyService.ACTION_TEST_VOICE)
+                previewRealVoice(codes[which])
             }
             .setPositiveButton("Done", null)
             .setNeutralButton("About") { _, _ ->
@@ -514,6 +514,37 @@ class MainActivity : Activity(), LillyBus.Ui {
                 ).setPositiveButton("OK", null).show()
             }
             .show()
+    }
+
+    private var preview: RealVoice? = null
+
+    /** Chuni hui awaaz yahin suna do; na chale toh asli wajah dikhao */
+    private fun previewRealVoice(name: String) {
+        preview?.stop()
+        if (name == RealVoice.OFF) return
+        val rv = RealVoice(this)
+        preview = rv
+        android.widget.Toast.makeText(this, "Loading $name… (first time can take a few seconds)", android.widget.Toast.LENGTH_SHORT).show()
+        rv.speak(
+            "Hi Rahul, I'm Lilly, and this is the $name voice. Kaisi lagi meri awaaz?",
+            onDone = { },
+            onFallback = {
+                if (isFinishing || preview !== rv) return@speak
+                AlertDialog.Builder(this)
+                    .setTitle("Real voice didn't load ✗")
+                    .setMessage(
+                        "So Lilly would use the phone's voice, which sounds the same for every choice.\n\n" +
+                            "Reason:\n${RealVoice.lastError ?: "unknown"}\n\nPlease send a screenshot of this."
+                    )
+                    .setPositiveButton("OK", null).show()
+            },
+            waitMs = 25_000L, force = true
+        )
+    }
+
+    override fun onStop() {
+        preview?.stop()
+        super.onStop()
     }
 
     private fun learner() = Learner(
