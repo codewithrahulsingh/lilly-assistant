@@ -810,14 +810,14 @@ class LillyService : Service() {
         val key = prefs.getString("ai_key", "") ?: ""
         val history = ArrayList(aiHistory)
         Thread {
-            val result = try { AiChat.ask(key, history, question) } catch (e: Exception) { null }
+            var failure: Throwable? = null
+            val result = try { AiChat.ask(key, history, question) } catch (e: Exception) { failure = e; null }
             handler.post {
                 if (mode == Mode.STOPPED) return@post
                 if (result == null) {
-                    say(
-                        "AI se jawab nahi mila. Internet aur AI key check kijiye",
-                        "ए आई से जवाब नहीं मिला। इंटरनेट और की चेक कीजिए"
-                    ) { endSession(); listen(Mode.WAKE) }
+                    // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
+                    val why = AiChat.explain(failure)
+                    say(why.first, why.second) { endSession(); listen(Mode.WAKE) }
                     return@post
                 }
                 aiHistory.add(AiChat.Turn("user", question))

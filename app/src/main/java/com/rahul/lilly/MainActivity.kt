@@ -308,9 +308,11 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "Call, apps, gaane jaise commands phone ke andar hi rehte hain."
             )
             .setView(box)
-            .setPositiveButton("Save") { _, _ ->
-                prefs.edit().putString("ai_key", input.text.toString().trim()).apply()
+            .setPositiveButton("Save aur test") { _, _ ->
+                val key = input.text.toString().filter { !it.isWhitespace() }
+                prefs.edit().putString("ai_key", key).apply()
                 refreshCards()
+                if (key.isNotEmpty()) testAiKey(key)
             }
             .setNeutralButton("Key banao") { _, _ ->
                 tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey")))
@@ -320,6 +322,26 @@ class MainActivity : Activity(), LillyBus.Ui {
                 refreshCards()
             }
             .show()
+    }
+
+    /** Key save hote hi ek chhota sawal bhej kar dekho ki AI sach me jawab de raha hai */
+    private fun testAiKey(key: String) {
+        android.widget.Toast.makeText(this, "AI key test ho rahi hai…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            var failure: Throwable? = null
+            val answer = try { AiChat.ask(key, emptyList(), "Namaste bolo") } catch (e: Exception) { failure = e; null }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                val b = AlertDialog.Builder(this)
+                if (answer != null) {
+                    b.setTitle("AI chal raha hai ✓").setMessage("Lilly ka jawab:\n" + answer.display)
+                } else {
+                    val detail = (failure as? AiChat.AiError)?.let { "\n\nServer: HTTP ${it.code} ${it.detail}" } ?: ""
+                    b.setTitle("AI nahi chala ✗").setMessage(AiChat.explain(failure).first + detail)
+                }
+                b.setPositiveButton("OK", null).show()
+            }
+        }.start()
     }
 
     /** User chunta hai ki Lilly voice se kaunse apps khol sakti hai */
