@@ -43,6 +43,9 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var wakeValue: TextView
     private lateinit var spotifyValue: TextView
     private lateinit var updateValue: TextView
+    private lateinit var notifValue: TextView
+    private lateinit var scriptValue: TextView
+    private lateinit var placesValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -206,10 +209,15 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r9 = row(col)
         wakeValue = card(r9, "👂", "Wake-up sensitivity") { chooseSensitivity() }
-        spotifyValue = card(r9, "🎧", "Spotify auto-play") { spotifySetup() }
+        spotifyValue = card(r9, "🤖", "Lilly helper") { spotifySetup() }
 
         val r10 = row(col)
         updateValue = card(r10, "⬆️", "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
+        notifValue = card(r10, "🔔", "Read my notifications") { notifSetup() }
+
+        val r11 = row(col)
+        scriptValue = card(r11, "💬", "WhatsApp typing") { chooseScript() }
+        placesValue = card(r11, "📍", "Home, office & city") { showPlaces() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -238,7 +246,16 @@ class MainActivity : Activity(), LillyBus.Ui {
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
         wakeValue.text = sensLabel(prefs.getString("wake_sens", "normal") ?: "normal")
-        spotifyValue.text = if (LillyAccess.enabled(this)) "ON ✓ songs start by themselves" else "OFF — only searches, tap to fix"
+        val helper = LillyAccess.enabled(this)
+        spotifyValue.text = if (helper) "ON ✓ Spotify, WhatsApp send, speaker" else "OFF — tap to turn on"
+        notifValue.text = when {
+            !prefs.getBoolean("read_notifs", false) -> "OFF"
+            !helper -> "Needs Lilly helper — tap"
+            else -> "ON ✓"
+        }
+        scriptValue.text = if (prefs.getString("msg_script", "spoken") == "roman") "Hinglish (Roman letters)" else "As you speak (हिंदी / English)"
+        val places = listOf("home_address", "office_address", "city").count { !prefs.getString(it, null).isNullOrBlank() }
+        placesValue.text = if (places == 0) "Not set — tap to see how" else "$places saved"
         updateValue.text = Updater.status(this)
         val learnedCount = learner().items().size
         learnedValue.text = if (learnedCount == 0) "Nothing yet — tap to see how" else "$learnedCount things learned"
@@ -614,26 +631,83 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun notifSetup() {
+        val on = prefs.getBoolean("read_notifs", false)
+        AlertDialog.Builder(this)
+            .setTitle("🔔 Read my notifications")
+            .setMessage(
+                "When this is on, Lilly keeps your latest notifications (like WhatsApp messages) in memory, " +
+                    "so you can ask \"Kiska message aaya?\" or \"Read my notifications\".\n\n" +
+                    "• Kept only in memory, never saved or sent anywhere, cleared when Lilly stops\n" +
+                    "• Needs \"Lilly helper\" to be on\n\n" +
+                    "It's ${if (on) "ON" else "OFF"} now."
+            )
+            .setPositiveButton(if (on) "Turn off" else "Turn on") { _, _ ->
+                prefs.edit().putBoolean("read_notifs", !on).apply()
+                refreshCards()
+                if (!on && !LillyAccess.enabled(this)) spotifySetup()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun chooseScript() {
+        val codes = listOf("spoken", "roman")
+        val labels = listOf("As you speak — Hindi script for Hindi (मैं आ रहा हूँ), English for English", "Hinglish in Roman letters (main aa raha hoon)")
+        val cur = codes.indexOf(prefs.getString("msg_script", "spoken") ?: "spoken")
+        AlertDialog.Builder(this)
+            .setTitle("How should Lilly type WhatsApp messages?")
+            .setSingleChoiceItems(labels.toTypedArray(), cur) { d, which ->
+                prefs.edit().putString("msg_script", codes[which]).apply()
+                refreshCards(); d.dismiss()
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun showPlaces() {
+        val home = prefs.getString("home_address", null)
+        val office = prefs.getString("office_address", null)
+        val city = prefs.getString("city", null)
+        AlertDialog.Builder(this)
+            .setTitle("📍 Home, office & city")
+            .setMessage(
+                "Home: ${home ?: "not set"}\nOffice: ${office ?: "not set"}\nCity (for weather): ${city ?: "not set — uses your location"}\n\n" +
+                    "To set, just tell Lilly:\n• \"My home address is Malviya Nagar, Jaipur\"\n• \"Mera office C-Scheme Jaipur mein hai\"\n• \"My city is Jaipur\"\n\n" +
+                    "Then: \"Ghar ka rasta dikhao\", \"Take me to office\", \"Mausam kaisa hai\"."
+            )
+            .setPositiveButton("OK", null)
+            .setNegativeButton("Clear all") { _, _ ->
+                prefs.edit().remove("home_address").remove("office_address").remove("city").apply(); refreshCards()
+            }
+            .show()
+    }
+
     private fun spotifySetup() {
         if (LillyAccess.enabled(this)) {
             AlertDialog.Builder(this)
-                .setTitle("Spotify auto-play is ON ✓")
-                .setMessage("Say \"Play Kesariya on Spotify\". Lilly searches it and taps the first song, so it starts playing.\n\nTo turn it off: Settings → Accessibility → Lilly Spotify auto-play.")
+                .setTitle("Lilly helper is ON ✓")
+                .setMessage(
+                    "Lilly can now press buttons for you, only right after you ask:\n" +
+                        "• Spotify: taps the first song so it plays\n• WhatsApp: taps Send / Call\n• Calls: taps Speaker\n\n" +
+                        "To turn it off: Settings → Accessibility → Lilly helper."
+                )
                 .setPositiveButton("OK", null)
                 .setNeutralButton("Settings") { _, _ -> tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                 .show()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("🎧 Make Spotify actually play")
+            .setTitle("🤖 Lilly helper")
             .setMessage(
-                "Spotify only opens a search when another app asks; it won't start the song. " +
-                    "With this on, Lilly taps the first song in the results for you.\n\n" +
-                    "• Lilly only looks at the Spotify app, and only right after you ask for a song\n" +
-                    "• Nothing is read or sent anywhere\n\n" +
+                "Some apps don't let other apps finish the job — Spotify only searches, WhatsApp only fills in the message, " +
+                    "and some phones ignore \"call on speaker\". With this on, Lilly presses that last button for you:\n" +
+                    "• Spotify: the first song   • WhatsApp: Send / Call   • Calls: Speaker\n\n" +
+                    "• She only presses a button right after you ask\n" +
+                    "• Notifications are read only if you also turn on \"Read my notifications\"\n" +
+                    "• Nothing is saved or sent anywhere\n\n" +
                     "Steps:\n" +
                     "1. Tap \"Open settings\" → Accessibility\n" +
-                    "2. Find \"Lilly Spotify auto-play\" (may be under \"Downloaded apps\" / \"Installed apps\") → turn ON\n\n" +
+                    "2. Find \"Lilly helper\" (may be under \"Downloaded apps\" / \"Installed apps\") → turn ON\n\n" +
                     "If it is greyed out or says \"Restricted setting\":\n" +
                     "1. Tap \"App info\" below\n" +
                     "2. Tap ⋮ (3 dots) at the top → \"Allow restricted settings\"\n" +
@@ -787,6 +861,14 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
                     "🎵  \"Play Kesariya on YouTube\" / \"YouTube par Kesariya chalao\"",
                     "🎵  \"Play Kesariya on Spotify\" / \"Spotify par Kesariya chalao\"",
+                    "💬  \"Rohit ko WhatsApp pe bolo main 10 minute mein aa raha hoon\"",
+                    "💬  \"Send a WhatsApp to mom saying I'll be late\" / \"Rohit ko WhatsApp video call karo\"",
+                    "🗺  \"Ghar ka rasta dikhao\" / \"Nearest petrol pump\" / \"Navigate to Jaipur airport\"",
+                    "🔔  \"Kiska message aaya?\" / \"Read my notifications\"",
+                    "☀️  \"Good morning\" / \"Mausam kaisa hai\" / \"Will it rain tomorrow?\"",
+                    "⚙️  \"DND on karo\" / \"Brightness kam karo\" / \"Phone silent karo\" / \"WiFi kholo\"",
+                    "📺  \"YouTube pe cricket highlights chalao\"",
+                    "🔢  \"Call nine eight seven six…\" / \"नौ आठ सात… पर कॉल करो\"",
                     "⏰  \"Set an alarm for 6 am\" / \"Subah sadhe 6 baje ka alarm\" / \"Har roz 7 baje\"",
                     "⏰  \"Wake me up in 20 minutes\" / \"10 minute ka timer\"",
                     "⏰  \"Remind me at 5 pm to call mom\" / \"5 baje yaad dilana ki dawai leni hai\"",
@@ -815,6 +897,8 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "• Your commands are turned into text by your phone's Google speech service\n" +
                     "• Questions go to an AI company only if you turn on \"AI chat\"; with a Gemini key, the real voice sends what Lilly says to Google; playing a song on YouTube looks it up online\n" +
                     "• Things Lilly remembers about you stay on the phone, and are sent along with AI questions\n" +
+                    "• Notifications are read only if you turn on \"Read my notifications\", kept in memory only\n" +
+                    "• Weather uses your approximate location with Open-Meteo (no account)\n" +
                     "• On the lock screen, calls go only to the list you chose\n" +
                     "• Opening an app from the lock screen asks you to unlock first\n" +
                     "• App data backup is off"
@@ -888,6 +972,8 @@ class MainActivity : Activity(), LillyBus.Ui {
             Manifest.permission.READ_CONTACTS
         )
         if (Build.VERSION.SDK_INT >= 33) wanted.add(Manifest.permission.POST_NOTIFICATIONS)
+        // Mausam aur "good morning" ke liye (sirf andaazan jagah)
+        wanted.add(Manifest.permission.ACCESS_COARSE_LOCATION)
         return wanted.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
     }
 

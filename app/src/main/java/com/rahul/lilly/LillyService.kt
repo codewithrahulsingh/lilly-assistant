@@ -589,11 +589,17 @@ class LillyService : Service() {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         // "auto": Hindi recognizer (jo Hinglish aur English shabd bhi samajhta hai) + English ko doosri bhasha ki tarah
         val pref = prefs.getString("lang", "auto") ?: "auto"
-        val lang = if (pref == "en") "en-IN" else "hi-IN"
+        // Auto: jis bhasha me pichhli baar bole the, wahi pehle (English bola toh English likhega, Hindi toh Hindi);
+        // doosri bhasha saath me, taaki beech me badlo toh bhi samjhe
+        val lang = when (pref) {
+            "en" -> "en-IN"
+            "hi" -> "hi-IN"
+            else -> if (english) "en-IN" else "hi-IN"
+        }
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
         if (pref == "auto") {
-            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("en-IN"))
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf(if (lang == "en-IN") "hi-IN" else "en-IN"))
         }
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
@@ -918,8 +924,36 @@ class LillyService : Service() {
         deliver(reply)
     }
 
+    private fun deliverLater(first: LillyBrain.Reply, work: () -> LillyBrain.Reply) {
+        val my = ++aiToken
+        var talking = true
+        var ready: (() -> Unit)? = null
+        sayBi(first.display, first.spoken) {
+            talking = false
+            val r = ready
+            if (r != null) { ready = null; r() }
+            else if (my == aiToken) {
+                mode = Mode.SPEAKING // mic band rakho, jawab aa raha hai
+                LillyBus.status("Thinking…")
+                LillyBus.ui?.keepAlive()
+            }
+        }
+        Thread {
+            val res = try { work() } catch (e: Exception) {
+                LillyBrain.Reply("Sorry, something went wrong", "माफ़ कीजिए, कुछ गड़बड़ हो गई", endChat = true)
+            }
+            handler.post {
+                if (mode == Mode.STOPPED || my != aiToken) return@post
+                val act = { deliver(res) }
+                if (talking) ready = act else act()
+            }
+        }.start()
+    }
+
     /** Jawab bolo, phir kaam karo (call, app, gaana…) */
     private fun deliver(reply: LillyBrain.Reply) {
+        // Internet wala kaam (mausam, good morning…): "Ek second" bolo, background me karo, phir jawab
+        reply.later?.let { work -> deliverLater(reply, work); return }
         val then = {
             if (reply.endChat || reply.action != null) {
                 endSession()
@@ -1003,7 +1037,8 @@ class LillyService : Service() {
 
         Thread {
             var failure: Throwable? = null
-            val result = try { AiChat.ask(key, history, question, facts) } catch (e: Exception) { failure = e; null }
+            val inEnglish = english
+            val result = try { AiChat.ask(key, history, question, facts, inEnglish) } catch (e: Exception) { failure = e; null }
             handler.post {
                 if (mode == Mode.STOPPED || my != aiToken) return@post
                 handler.removeCallbacks(more)

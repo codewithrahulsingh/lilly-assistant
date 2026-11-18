@@ -43,7 +43,9 @@ class LillyBrain(private val ctx: Context) {
         /** Kaam nahi hua (naam/app nahi mila, samajh nahi aaya) — seekhne ke liye */
         val failed: Boolean = false,
         /** English me bolne ke liye chhota roop (display lamba ho tab) */
-        val spokenEn: String? = null
+        val spokenEn: String? = null,
+        /** Internet wala kaam (mausam…): service "Ek second" bol kar background me chalaati hai */
+        val later: (() -> Reply)? = null
     )
 
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
@@ -58,17 +60,30 @@ class LillyBrain(private val ctx: Context) {
     /** "Kaun sa number?" poochha hai aur jawab ka intezaar hai */
     private class PendingCall(
         val target: String, val options: List<CallChoice.Phone>, val byName: Boolean,
-        val speaker: Boolean, val favOnly: Boolean, var at: Long, var asked: Int = 0, var page: Int = 0
+        val speaker: Boolean, val favOnly: Boolean, var at: Long, var asked: Int = 0, var page: Int = 0,
+        /** "call", "wa_msg", "wa_call", "wa_video" */
+        val action: String = "call", val text: String = ""
     )
+
+    /** WhatsApp: kya likhna hai poochha / bhejne se pehle "bhej doon?" */
+    private class PendingWa(val target: String, val phone: CallChoice.Phone, var text: String, var at: Long)
+    private var waAskText: PendingWa? = null
+    private var waConfirm: PendingWa? = null
+
+    /** User ne asal me kya bola (Hindi lipi samet) — WhatsApp message jaisa bola waisa likhne ke liye */
+    private var lastOriginal = ""
     private var pendingCall: PendingCall? = null
 
     /** "Kaun sa?" poochh kar jawab ka intezaar — service chup rehne par session band nahi karegi */
     fun awaitingChoice(): Boolean {
-        val pc = pendingCall ?: return false
-        return System.currentTimeMillis() - pc.at < 90_000
+        val now = System.currentTimeMillis()
+        val pc = pendingCall
+        if (pc != null && now - pc.at < 90_000) return true
+        val w = waAskText ?: waConfirm ?: return false
+        return now - w.at < 90_000
     }
 
-    fun cancelChoice() { pendingCall = null }
+    fun cancelChoice() { pendingCall = null; waAskText = null; waConfirm = null }
 
     /** Chup rehne par halka sa yaad dilana */
     fun choicePrompt(): Reply {
@@ -106,6 +121,8 @@ class LillyBrain(private val ctx: Context) {
             .map { Parser.stripWakeWord(Parser.roman(it)) }
             .filter { it.isNotBlank() }.distinct()
         if (heard.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true, failed = true)
+        lastOriginal = Parser.stripWakeWord(alternatives.firstOrNull { it.isNotBlank() } ?: rawText)
+        answerPendingWa(heard)?.let { return it }
         answerPendingCall(heard)?.let { return it }
         answerPendingAlarm(heard)?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
@@ -135,6 +152,13 @@ class LillyBrain(private val ctx: Context) {
 
         return when (main) {
             is Cmd.Call -> callReply(cmds.filterIsInstance<Cmd.Call>().map { it.target }.distinct(), main.speaker)
+            is WhatsAppCmd -> {
+                val text = if (main.text.isBlank()) "" else messageText(main.text)
+                callReply(
+                    cmds.filterIsInstance<WhatsAppCmd>().map { it.target }.distinct(), false,
+                    action = if (main.kind == "msg") "wa_msg" else "wa_${main.kind}", text = text
+                )
+            }
             is Cmd.Remember -> {
                 if (memory.remember(main.fact)) Reply("Okay, I'll remember: ${main.fact}", "ठीक है, याद रख लिया", endChat = true)
                 else Reply("I already remember that", "ये मुझे पहले से याद है", endChat = true)
@@ -144,6 +168,13 @@ class LillyBrain(private val ctx: Context) {
                 else Reply("I don't have anything like that saved", "ऐसी कोई बात मुझे याद नहीं है", endChat = true)
             }
             Cmd.Recall -> recallReply()
+            is NavigateCmd -> navigateReply(main)
+            is NearbyCmd -> nearbyReply(main.what)
+            is SaveAddressCmd -> saveAddressReply(main)
+            is NotificationsCmd -> notificationsReply(main.app)
+            is RoutineCmd -> routineReply(main.kind)
+            is WeatherCmd -> Reply("One second…", "एक सेकंड", later = { weatherReply(main.day) })
+            is SettingCmd -> settingReply(main)
             is Cmd.OpenApp -> openApp(cmds.filterIsInstance<Cmd.OpenApp>().map { it.name }.distinct(), main.orMusic)
             is Cmd.PlayMusic -> playMusic(main.query, main.app)
             is Cmd.Media -> mediaReply(main.action)
@@ -183,6 +214,249 @@ class LillyBrain(private val ctx: Context) {
                     else "I understood, but I couldn't do that on the phone",
                     "ये मुझे अभी नहीं आता",
                     endChat = true, failed = true
+                )
+            }
+        }
+    }
+
+    // ---------- Rasta / jagah ----------
+
+    private val mapsPkg = "com.google.android.apps.maps"
+
+    private fun navigateReply(n: NavigateCmd): Reply {
+        val saved = when (n.dest) {
+            "home" -> prefs.getString("home_address", null)
+            "office" -> prefs.getString("office_address", null)
+            else -> null
+        }
+        val target = saved ?: when (n.dest) { "home" -> "Home"; "office" -> "Work"; else -> n.dest }
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${Uri.encode(target)}&mode=${n.mode}"))
+        if (installed(mapsPkg)) i.setPackage(mapsPkg)
+        else i.data = Uri.parse("geo:0,0?q=${Uri.encode(target)}")
+        val name = when (n.dest) { "home" -> "home"; "office" -> "the office"; else -> n.dest.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } } }
+        val nameHi = when (n.dest) { "home" -> "घर"; "office" -> "ऑफ़िस"; else -> n.dest }
+        val how = when (n.mode) { "w" -> " on foot"; "l" -> " by bike"; else -> "" }
+        val tip = if (saved == null && (n.dest == "home" || n.dest == "office"))
+            "\n(Tip: say “My ${if (n.dest == "home") "home" else "office"} address is …” once, so I always find it.)" else ""
+        return Reply("Starting directions to $name$how$tip", "$nameHi का रास्ता दिखा रही हूँ", { openExternal(i, "Maps") }, endChat = true)
+    }
+
+    private fun nearbyReply(what: String): Reply {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(what)}"))
+        if (installed(mapsPkg)) i.setPackage(mapsPkg)
+        return Reply("Here's the nearest $what", "पास में $what दिखा रही हूँ", { openExternal(i, "Maps") }, endChat = true)
+    }
+
+    private fun saveAddressReply(a: SaveAddressCmd): Reply {
+        val key = when (a.kind) { "home" -> "home_address"; "office" -> "office_address"; else -> "city" }
+        val value = Parser.originalSpan(lastOriginal, a.address).trim()
+        prefs.edit().putString(key, value).apply()
+        return when (a.kind) {
+            "home" -> Reply("Saved your home address: $value", "घर का पता याद रख लिया", endChat = true)
+            "office" -> Reply("Saved your office address: $value", "ऑफ़िस का पता याद रख लिया", endChat = true)
+            else -> Reply("Okay, your city is $value", "ठीक है, आपका शहर $value", endChat = true)
+        }
+    }
+
+    // ---------- Notifications ----------
+
+    private fun notificationsReply(app: String): Reply {
+        if (!LillyAccess.enabled(ctx) || !prefs.getBoolean("read_notifs", false)) {
+            return Reply(
+                "To read your notifications, turn on “Read my notifications” in the Lilly app",
+                "नोटिफिकेशन पढ़ने के लिए लिली ऐप में रीड माय नोटिफिकेशन्स ऑन कीजिए", endChat = true
+            )
+        }
+        val list = LillyAccess.recentNotes(app, 6 * 60 * 60 * 1000L)
+        if (list.isEmpty()) {
+            return Reply(
+                if (app.isBlank()) "No new notifications" else "No new WhatsApp messages",
+                if (app.isBlank()) "कोई नया नोटिफिकेशन नहीं है" else "व्हाट्सऐप पर कोई नया मैसेज नहीं है", endChat = true
+            )
+        }
+        val top = list.take(5)
+        val lines = top.joinToString("\n") { "• ${it.app}: ${it.title}${if (it.text.isNotBlank()) " — " + it.text else ""}" }
+        fun say(n: LillyAccess.Note, hi: Boolean): String {
+            val who = CallChoice.speakName(n.title)
+            val body = CallChoice.speakName(n.text).take(140)
+            return if (hi) "${n.app} पर $who: $body" else "${n.app}, $who: $body"
+        }
+        val more = if (list.size > 5) list.size - 5 else 0
+        LillyAccess.clearNotes(app)
+        return Reply(
+            "You have ${list.size} new:\n$lines" + if (more > 0) "\n…and $more more" else "",
+            "आपके ${list.size} नए नोटिफिकेशन हैं। " + top.joinToString("। ") { say(it, true) },
+            endChat = true,
+            spokenEn = "You have ${list.size} new. " + top.joinToString(". ") { say(it, false) }
+        )
+    }
+
+    // ---------- Good morning / good night ----------
+
+    private fun routineReply(kind: String): Reply {
+        val cal = Calendar.getInstance()
+        val h = cal.get(Calendar.HOUR_OF_DAY)
+        val time = TimeParse.label(h, cal.get(Calendar.MINUTE))
+        val day = SimpleDateFormat("EEEE, d MMMM", Locale.ENGLISH).format(Date())
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+        val next = try { am.nextAlarmClock?.triggerTime } catch (e: Exception) { null }
+        val nextLine = next?.let {
+            val c = Calendar.getInstance().apply { timeInMillis = it }
+            val l = TimeParse.label(c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE))
+            val tomorrow = c.get(Calendar.DAY_OF_YEAR) != cal.get(Calendar.DAY_OF_YEAR)
+            Pair("Your next alarm is at $l${if (tomorrow) " tomorrow" else ""}.", "अगला अलार्म ${TimeParse.labelHi(c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE))} का है।")
+        }
+        if (kind == "night") {
+            return Reply(
+                "Good night Rahul! ${nextLine?.first ?: "No alarm is set."}",
+                "गुड नाइट राहुल! ${nextLine?.second ?: "कोई अलार्म नहीं लगा है।"}",
+                endChat = true
+            )
+        }
+        val hello = when (h) { in 4..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
+        val helloHi = when (h) { in 4..11 -> "सुप्रभात"; in 12..16 -> "नमस्ते"; else -> "शुभ संध्या" }
+        val rem = todaysReminders()
+        val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return Reply("One second…", "एक सेकंड", later = {
+            val w = try { Weather.fetch(ctx) } catch (e: Exception) { null }
+            val en = StringBuilder("$hello Rahul! It's $time, $day. ")
+            val hi = StringBuilder("$helloHi राहुल! अभी ${TimeParse.labelHi(h, cal.get(Calendar.MINUTE))} हैं। ")
+            if (w != null) { en.append(Weather.line(w, "today", false)).append(' '); hi.append(Weather.line(w, "today", true)).append(' ') }
+            if (rem.isNotEmpty()) {
+                en.append("Reminders today: ").append(rem.joinToString(", ") { "${it.first} ${it.second}" }).append(". ")
+                hi.append("आज के रिमाइंडर: ").append(rem.joinToString(", ") { "${it.first} ${it.second}" }).append("। ")
+            }
+            nextLine?.let { en.append(it.first).append(' '); hi.append(it.second).append(' ') }
+            en.append("Battery is at $pct percent.")
+            hi.append("बैटरी $pct प्रतिशत है।")
+            Reply(en.toString().trim(), hi.toString().trim(), endChat = true)
+        })
+    }
+
+    /** Lilly ke lagaye aaj ke reminders: (samay, kaam) */
+    private fun todaysReminders(): List<Pair<String, String>> {
+        val now = System.currentTimeMillis()
+        val end = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59) }.timeInMillis
+        return (prefs.getString("reminders", "") ?: "").split('\n').mapNotNull { line ->
+            val at = line.substringBefore('|').toLongOrNull() ?: return@mapNotNull null
+            if (at < now || at > end) return@mapNotNull null
+            val c = Calendar.getInstance().apply { timeInMillis = at }
+            Pair(TimeParse.label(c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE)), line.substringAfter('|'))
+        }
+    }
+
+    private fun saveReminder(h: Int, m: Int, label: String) {
+        val c = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, h); set(Calendar.MINUTE, m); set(Calendar.SECOND, 0)
+            if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+        }
+        val now = System.currentTimeMillis()
+        val keep = (prefs.getString("reminders", "") ?: "").split('\n')
+            .filter { (it.substringBefore('|').toLongOrNull() ?: 0) > now }.takeLast(30)
+        prefs.edit().putString("reminders", (keep + "${c.timeInMillis}|${label.replace('\n', ' ')}").joinToString("\n")).apply()
+    }
+
+    // ---------- Mausam ----------
+
+    private fun weatherReply(day: String): Reply = try {
+        val w = Weather.fetch(ctx)
+        Reply(Weather.line(w, day, false), Weather.line(w, day, true), endChat = true)
+    } catch (e: Weather.NeedLocation) {
+        Reply(
+            "I need your location for the weather. Allow Location in the Lilly app, or say: my city is Jaipur",
+            "मौसम के लिए लोकेशन चाहिए। लिली ऐप में लोकेशन अलाउ कीजिए, या बोलिए: मेरा शहर जयपुर है",
+            endChat = true, failed = true
+        )
+    } catch (e: Exception) {
+        Reply("I couldn't get the weather right now. Is the internet on?", "अभी मौसम नहीं मिल पाया, इंटरनेट चेक कीजिए", endChat = true)
+    }
+
+    // ---------- Phone settings ----------
+
+    private fun panelIntent(name: String): Intent {
+        val q = Build.VERSION.SDK_INT >= 29
+        return when (name) {
+            "wifi" -> Intent(if (q) Settings.Panel.ACTION_WIFI else Settings.ACTION_WIFI_SETTINGS)
+            "data" -> Intent(if (q) Settings.Panel.ACTION_INTERNET_CONNECTIVITY else Settings.ACTION_WIRELESS_SETTINGS)
+            "bluetooth" -> Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+            "hotspot" -> Intent(Settings.ACTION_WIRELESS_SETTINGS)
+            "airplane" -> Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS)
+            "location" -> Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            "battery" -> Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+            "display" -> Intent(Settings.ACTION_DISPLAY_SETTINGS)
+            "sound" -> Intent(Settings.ACTION_SOUND_SETTINGS)
+            else -> Intent(Settings.ACTION_SETTINGS)
+        }
+    }
+
+    private fun settingReply(c: SettingCmd): Reply {
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val policyOk = try { nm.isNotificationPolicyAccessGranted } catch (e: Exception) { false }
+        val askPolicy = Reply(
+            "I need one permission for that. I'm opening it — turn on Lilly there, then ask me again",
+            "इसके लिए एक परमिशन चाहिए। खोल रही हूँ, वहाँ लिली ऑन करके फिर से बोलिए",
+            { openExternal(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), "Settings") }, endChat = true
+        )
+        when (c.what) {
+            "dnd" -> {
+                if (!policyOk) return askPolicy
+                val on = c.value == "on"
+                return Reply(if (on) "Do Not Disturb is on" else "Do Not Disturb is off", if (on) "डू नॉट डिस्टर्ब ऑन कर दिया" else "डू नॉट डिस्टर्ब बंद कर दिया", {
+                    try {
+                        nm.setInterruptionFilter(
+                            if (on) android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY else android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+                        )
+                    } catch (e: Exception) { }
+                }, endChat = true)
+            }
+            "ringer" -> {
+                if (c.value == "silent" && !policyOk) return askPolicy
+                val (mode, en, hi) = when (c.value) {
+                    "silent" -> Triple(AudioManager.RINGER_MODE_SILENT, "Phone is on silent", "फ़ोन साइलेंट कर दिया")
+                    "vibrate" -> Triple(AudioManager.RINGER_MODE_VIBRATE, "Phone is on vibrate", "फ़ोन वाइब्रेट पर कर दिया")
+                    else -> Triple(AudioManager.RINGER_MODE_NORMAL, "Ringer is back on", "रिंगर वापस चालू कर दिया")
+                }
+                return Reply(en, hi, { try { audio.ringerMode = mode } catch (e: Exception) { } }, endChat = true)
+            }
+            "brightness" -> {
+                if (!Settings.System.canWrite(ctx)) {
+                    return Reply(
+                        "To change brightness I need one permission. I'm opening it — allow Lilly there, then ask again",
+                        "ब्राइटनेस बदलने के लिए एक परमिशन चाहिए। खोल रही हूँ, वहाँ लिली को अलाउ करके फिर से बोलिए",
+                        { openExternal(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + ctx.packageName)), "Settings") },
+                        endChat = true
+                    )
+                }
+                val cr = ctx.contentResolver
+                val cur = try { Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS) } catch (e: Exception) { 128 }
+                val target = when (c.value) {
+                    "max" -> 255
+                    "min" -> 8
+                    "up" -> (cur + 64).coerceAtMost(255)
+                    "down" -> (cur - 64).coerceAtLeast(8)
+                    else -> ((c.value.toIntOrNull() ?: 50) * 255 / 100).coerceIn(5, 255)
+                }
+                val pct = target * 100 / 255
+                return Reply("Brightness set to $pct%", "ब्राइटनेस $pct प्रतिशत कर दी", {
+                    try {
+                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+                        Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS, target)
+                    } catch (e: Exception) { }
+                }, endChat = true)
+            }
+            else -> {
+                val name = c.value
+                val label = mapOf(
+                    "wifi" to "Wi-Fi", "data" to "mobile data", "bluetooth" to "Bluetooth", "hotspot" to "hotspot",
+                    "airplane" to "airplane mode", "location" to "location", "battery" to "battery saver",
+                    "display" to "display", "sound" to "sound"
+                )[name] ?: "settings"
+                val switchy = name in setOf("wifi", "data", "bluetooth", "hotspot", "airplane", "location")
+                return Reply(
+                    if (switchy) "Android doesn't let apps flip the $label switch themselves, so I've opened it for you" else "Opening $label settings",
+                    if (switchy) "$label का स्विच खोल दिया है, वहाँ से ऑन या ऑफ़ कर लीजिए" else "$label सेटिंग्स खोल रही हूँ",
+                    { openExternal(panelIntent(name), "Settings") }, endChat = true
                 )
             }
         }
@@ -241,7 +515,10 @@ class LillyBrain(private val ctx: Context) {
         } else {
             Pair("Alarm set for $time$rep$inText", "${repHi}$timeHi का अलार्म लगा दिया")
         }
-        return Reply(en, hi, { openExternal(i, "Clock") }, endChat = true)
+        return Reply(en, hi, {
+            if (a.label.isNotBlank()) saveReminder(h, m, a.label)
+            openExternal(i, "Clock")
+        }, endChat = true)
     }
 
     private fun timerReply(sec: Int): Reply {
@@ -332,8 +609,10 @@ class LillyBrain(private val ctx: Context) {
     private fun granted(p: String) =
         ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
-    private fun callReply(targets: List<String>, speaker: Boolean): Reply {
+    private fun callReply(targets: List<String>, speaker: Boolean, action: String = "call", text: String = ""): Reply {
         pendingCall = null
+        waAskText = null
+        waConfirm = null
         val target = targets.first()
 
         // ---- Lock screen security ----
@@ -355,6 +634,7 @@ class LillyBrain(private val ctx: Context) {
                 "I can't dial a spoken number on the lock screen. Please unlock your phone",
                 "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए", endChat = true
             )
+            if (action != "call") return finishContact(target, CallChoice.Phone(digits, digits, ""), speaker, false, action, text)
             return Reply("Calling $digits$onSpk", "$digits पर$onSpkHi कॉल कर रही हूँ", { startCall(digits, speaker) }, endChat = true)
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
@@ -372,27 +652,42 @@ class LillyBrain(private val ctx: Context) {
 
         // Pehle se seekha hua naam ("rohit" -> "Rohit Sharma", 2+ baar chuna gaya)
         val learned = targets.firstNotNullOfOrNull { learner.contactFor(it) }
-        if (learned != null && rows.any { it.name == learned }) return callByName(target, learned, rows, speaker, favOnly)
+        if (learned != null && rows.any { it.name == learned }) return callByName(target, learned, rows, speaker, favOnly, action, text)
 
         // Kaun-kaun se contact ho sakte hain ("Abhishek" -> 16 Abhishek)
         val tied = CallChoice.candidates(targets, rows.map { it.name }) { learner.contactBonus(it) }
         if (tied.isEmpty()) return notFound
-        if (tied.size == 1) return callByName(target, tied[0], rows, speaker, favOnly)
+        if (tied.size == 1) return callByName(target, tied[0], rows, speaker, favOnly, action, text)
 
         val options = tied.map { n -> rows.first { it.name == n } }
-        val pc = PendingCall(target, options, byName = true, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis())
+        val pc = PendingCall(
+            target, options, byName = true, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis(),
+            action = action, text = text
+        )
         pendingCall = pc
         return askChoice(pc)
     }
 
-    private fun callByName(target: String, name: String, rows: List<CallChoice.Phone>, speaker: Boolean, favOnly: Boolean): Reply {
-        val nums = CallChoice.dedupe(rows.filter { it.name == name })
-        if (nums.size == 1) return callNumber(target, nums[0], speaker, chosen = false)
+    private fun callByName(
+        target: String, name: String, rows: List<CallChoice.Phone>, speaker: Boolean, favOnly: Boolean,
+        action: String = "call", text: String = ""
+    ): Reply {
+        var nums = CallChoice.dedupe(rows.filter { it.name == name })
+        // WhatsApp: jis number par WhatsApp hai wahi
+        if (action != "call" && nums.size > 1) {
+            val wa = whatsappNumbers()
+            val onWa = nums.filter { CallChoice.digitsKey(it.number) in wa }
+            if (onWa.isNotEmpty()) nums = onWa
+        }
+        if (nums.size == 1) return finishContact(target, nums[0], speaker, false, action, text)
         // Pehle kai baar chuna hua number
         learner.numberFor(name)?.let { known ->
-            nums.firstOrNull { CallChoice.digitsKey(it.number) == known }?.let { return callNumber(target, it, speaker, chosen = false) }
+            nums.firstOrNull { CallChoice.digitsKey(it.number) == known }?.let { return finishContact(target, it, speaker, false, action, text) }
         }
-        val pc = PendingCall(target, nums.take(5), byName = false, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis())
+        val pc = PendingCall(
+            target, nums.take(5), byName = false, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis(),
+            action = action, text = text
+        )
         pendingCall = pc
         return askChoice(pc)
     }
@@ -412,7 +707,7 @@ class LillyBrain(private val ctx: Context) {
                 val names = o.map { CallChoice.speakName(it.name) }
                 return Reply(
                     "I found ${o.size} contacts for “$who”:\n$lines\nWhich one?",
-                    "${o.size} कॉन्टैक्ट मिले: " + names.joinToString(", या ") + "। किसको कॉल करूँ?",
+                    "${o.size} कॉन्टैक्ट मिले: " + names.joinToString(", या ") + "। ${whoVerbHi(pc.action)}",
                     endChat = false
                 )
             }
@@ -449,7 +744,7 @@ class LillyBrain(private val ctx: Context) {
         }
         return Reply(
             "$name has ${o.size} numbers:\n$lines\nWhich one?",
-            "${CallChoice.speakName(name)} के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर कॉल करूँ?",
+            "${CallChoice.speakName(name)} के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर ${if (pc.action == "wa_msg") "भेजूँ" else "कॉल करूँ"}?",
             endChat = false
         )
     }
@@ -477,8 +772,8 @@ class LillyBrain(private val ctx: Context) {
             pendingCall = null
             val chosen = pc.options[idx]
             return if (pc.byName) {
-                callByName(pc.target, chosen.name, loadPhones(pc.favOnly), pc.speaker, pc.favOnly)
-            } else callNumber(pc.target, chosen, pc.speaker, chosen = true)
+                callByName(pc.target, chosen.name, loadPhones(pc.favOnly), pc.speaker, pc.favOnly, pc.action, pc.text)
+            } else finishContact(pc.target, chosen, pc.speaker, true, pc.action, pc.text)
         }
         // Koi nayi command boli ("time kya hua") toh wahi karo
         val cmd = Parser.parse(learner.rewrite(ans) ?: ans)
@@ -492,6 +787,170 @@ class LillyBrain(private val ctx: Context) {
         }
         pendingCall = null
         return Reply("Okay, let's leave it for now", "ठीक है, अभी रहने देते हैं", endChat = true)
+    }
+
+    private fun whoVerbHi(action: String) = if (action == "wa_msg") "किसको मैसेज भेजूँ?" else "किसको कॉल करूँ?"
+
+    /** Contact (aur number) mil gaya — ab jo kaam karna tha wo */
+    private fun finishContact(
+        target: String, p: CallChoice.Phone, speaker: Boolean, chosen: Boolean, action: String, text: String
+    ): Reply = when (action) {
+        "wa_msg" -> {
+            val w = PendingWa(target, p, text, System.currentTimeMillis())
+            if (text.isBlank()) {
+                waAskText = w
+                Reply("What should I send to ${p.name}?", "${CallChoice.speakName(p.name)} को क्या भेजूँ?", endChat = false)
+            } else confirmWa(w)
+        }
+        "wa_call" -> waCallReply(target, p, video = false)
+        "wa_video" -> waCallReply(target, p, video = true)
+        else -> callNumber(target, p, speaker, chosen)
+    }
+
+    // ---------- WhatsApp ----------
+
+    private val yesRe = Regex(
+        """^(yes|yeah|yep|yup|ya|haan|han|ha|haa|haan ji|ji haan|ji|send|send it|send kar do|send karo|bhej do|bhejo|bhej de|""" +
+            """ok|okay|theek hai|thik hai|sure|kar do|done|correct|sahi hai|perfect|go ahead)$"""
+    )
+
+    /** Script setting: "spoken" (jaisa bola — Hindi lipi bhi) ya "roman" (Hinglish) */
+    private fun messageText(fromParse: String): String {
+        val raw = if (prefs.getString("msg_script", "spoken") == "roman") fromParse
+        else Parser.originalSpan(lastOriginal, fromParse)
+        return raw.trim().replaceFirstChar { it.uppercase() }
+    }
+
+    private fun confirmWa(w: PendingWa): Reply {
+        waConfirm = w
+        w.at = System.currentTimeMillis()
+        val who = CallChoice.speakName(w.phone.name)
+        return Reply(
+            "Send to ${w.phone.name}:\n“${w.text}”\n\nSay yes to send, or say the message again.",
+            "$who को भेजूँ: ${w.text}?",
+            endChat = false,
+            spokenEn = "Send to $who: ${w.text}?"
+        )
+    }
+
+    /** "Kya bhejun?" / "Bhej doon?" ka jawab */
+    private fun answerPendingWa(heard: List<String>): Reply? {
+        val now = System.currentTimeMillis()
+        val ans = heard.first()
+        val n = Parser.normalize(ans)
+        waAskText?.let { w ->
+            waAskText = null
+            if (now - w.at > 90_000) return null
+            if (CallChoice.isCancel(ans)) return Reply("Okay, not sending", "ठीक है, नहीं भेजती", endChat = true)
+            w.text = (if (prefs.getString("msg_script", "spoken") == "roman") n else lastOriginal.ifBlank { ans })
+                .trim().replaceFirstChar { it.uppercase() }
+            return confirmWa(w)
+        }
+        val w = waConfirm ?: return null
+        if (now - w.at > 90_000) { waConfirm = null; return null }
+        if (heard.any { yesRe.matches(Parser.normalize(it)) }) {
+            waConfirm = null
+            return sendWa(w)
+        }
+        if (CallChoice.isCancel(ans)) {
+            waConfirm = null
+            return Reply("Okay, not sending", "ठीक है, नहीं भेजती", endChat = true)
+        }
+        // Koi nayi command ("time kya hua") ho toh wahi; warna isi ko naya message maano
+        val cmd = Parser.parse(learner.rewrite(ans) ?: ans)
+        if (cmd !is Cmd.Unknown && cmd !is Cmd.Chat) { waConfirm = null; return null }
+        w.text = (if (prefs.getString("msg_script", "spoken") == "roman") n else lastOriginal.ifBlank { ans })
+            .trim().replaceFirstChar { it.uppercase() }
+        return confirmWa(w)
+    }
+
+    private fun waPackage(): String? = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { installed(it) }
+
+    /** WhatsApp ke liye number: desh ka code ke saath, bina + ke (10 ank = India, 91 jodo) */
+    private fun waNumber(n: String): String {
+        val d = n.filter { it.isDigit() }
+        return when {
+            n.trim().startsWith("+") -> d
+            d.length == 10 -> "91$d"
+            d.length == 11 && d.startsWith("0") -> "91" + d.drop(1)
+            d.startsWith("00") -> d.drop(2)
+            else -> d
+        }
+    }
+
+    /** Kin numbers par WhatsApp hai (aakhri 10 ank) */
+    private fun whatsappNumbers(): Set<String> {
+        val out = HashSet<String>()
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI, arrayOf(ContactsContract.Data.DATA1),
+                ContactsContract.Data.MIMETYPE + " IN (?, ?)",
+                arrayOf("vnd.android.cursor.item/vnd.com.whatsapp.profile", "vnd.android.cursor.item/vnd.com.whatsapp.w4b.profile"),
+                null
+            )?.use { c -> while (c.moveToNext()) c.getString(0)?.let { out.add(CallChoice.digitsKey(it.substringBefore('@'))) } }
+        } catch (e: Exception) { }
+        return out
+    }
+
+    private fun sendWa(w: PendingWa): Reply {
+        val pkg = waPackage() ?: return Reply("WhatsApp isn't installed on this phone", "इस फ़ोन में व्हाट्सऐप नहीं है", endChat = true, failed = true)
+        val uri = Uri.parse("https://api.whatsapp.com/send?phone=${waNumber(w.phone.number)}&text=" + Uri.encode(w.text))
+        val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)
+        val auto = LillyAccess.enabled(ctx)
+        val who = CallChoice.speakName(w.phone.name)
+        return Reply(
+            if (auto) "Sending to ${w.phone.name}" else "Your message to ${w.phone.name} is ready in WhatsApp — tap Send",
+            if (auto) "$who को भेज रही हूँ" else "मैसेज लिख दिया है, भेजने के लिए सेंड दबाइए",
+            {
+                if (w.phone.name.any { it.isLetter() }) learner.rememberContact(w.target, w.phone.name)
+                if (auto) LillyAccess.sendWhatsApp()
+                openExternal(intent, "WhatsApp")
+            }, endChat = true
+        )
+    }
+
+    /** WhatsApp voice / video call: contacts me WhatsApp ki "call" wali entry se seedha */
+    private fun waCallReply(target: String, p: CallChoice.Phone, video: Boolean): Reply {
+        val pkg = waPackage() ?: return Reply("WhatsApp isn't installed on this phone", "इस फ़ोन में व्हाट्सऐप नहीं है", endChat = true, failed = true)
+        val mime = if (video) "vnd.android.cursor.item/vnd.com.whatsapp.video.call" else "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
+        val key = CallChoice.digitsKey(p.number)
+        var dataId: Long? = null
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data._ID, ContactsContract.Data.DATA1, ContactsContract.Data.DATA3, ContactsContract.Data.DISPLAY_NAME),
+                ContactsContract.Data.MIMETYPE + "=?", arrayOf(mime), null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val digits = ((c.getString(1) ?: "") + " " + (c.getString(2) ?: "")).filter { it.isDigit() || it == ' ' }
+                    if (digits.split(' ').any { it.length >= 10 && CallChoice.digitsKey(it) == key }) { dataId = c.getLong(0); break }
+                }
+            }
+        } catch (e: Exception) { }
+        val kind = if (video) "video call" else "WhatsApp call"
+        val kindHi = if (video) "वीडियो कॉल" else "व्हाट्सऐप कॉल"
+        val who = CallChoice.speakName(p.name)
+        val id = dataId
+        if (id != null) {
+            val i = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(Uri.parse("content://com.android.contacts/data/$id"), mime)
+                .setPackage(pkg)
+            return Reply("Starting a $kind with ${p.name}", "$who को $kindHi कर रही हूँ", {
+                learner.rememberContact(target, p.name)
+                openExternal(i, "WhatsApp")
+            }, endChat = true)
+        }
+        // Contacts me entry nahi: chat kholo, aur (helper ON ho toh) call button dabao
+        val chat = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=${waNumber(p.number)}")).setPackage(pkg)
+        val auto = LillyAccess.enabled(ctx)
+        return Reply(
+            if (auto) "Starting a $kind with ${p.name}" else "I've opened ${p.name}'s chat — tap the call button",
+            if (auto) "$who को $kindHi कर रही हूँ" else "चैट खोल दी है, कॉल बटन दबाइए",
+            {
+                if (auto) LillyAccess.callOnWhatsApp(video)
+                openExternal(chat, "WhatsApp")
+            }, endChat = true
+        )
     }
 
     private fun callNumber(target: String, p: CallChoice.Phone, speaker: Boolean, chosen: Boolean): Reply {
@@ -544,7 +1003,11 @@ class LillyBrain(private val ctx: Context) {
                 val extras = Bundle()
                 if (speaker) extras.putBoolean(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
                 tm.placeCall(Uri.fromParts("tel", number, null), extras)
-                if (speaker) forceSpeaker()
+                if (speaker) {
+                    // Call screen par "Speaker" button khud dabao (har phone par chalta hai, helper ON ho toh)
+                    if (LillyAccess.enabled(ctx)) LillyAccess.pressSpeaker()
+                    forceSpeaker()
+                }
                 return
             } catch (e: Exception) { }
         }
@@ -677,7 +1140,7 @@ class LillyBrain(private val ctx: Context) {
         val remember = { if (app.isNotBlank()) learner.setMusicApp(app) }
 
         if (want == "spotify" && installed(spotify)) return spotifyReply(query, shown, remember)
-        if (want == "youtube" && installed(youtube)) return youtubeReply(query, shown, remember)
+        if (want == "youtube" && installed(youtube)) return youtubeReply(query, shown, remember, asVideo = app == "youtube")
         if (app == "spotify") {
             return Reply("Spotify isn't installed on this phone", "इस फ़ोन में स्पॉटिफाई नहीं है", endChat = true, failed = true)
         }
@@ -735,11 +1198,12 @@ class LillyBrain(private val ctx: Context) {
         }, endChat = true)
 
     /** YouTube: pehla result dhoondh kar seedha wahi video chalao (sirf search par na ruke) */
-    private fun youtubeReply(query: String, shown: String, remember: () -> Unit = {}): Reply =
+    private fun youtubeReply(query: String, shown: String, remember: () -> Unit = {}, asVideo: Boolean = false): Reply =
         Reply("Playing $shown on YouTube", "यूट्यूब पर $shown चला रही हूँ", {
             remember()
             Thread {
-                val id = MusicControl.firstYouTubeVideo("$query song")
+                // "YouTube pe cricket highlights" = video; bina app bole gaana maango toh "song" jodo
+                val id = MusicControl.firstYouTubeVideo(if (asVideo) query else "$query song")
                 Handler(Looper.getMainLooper()).post {
                     val intent = if (id != null) {
                         Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$id")).setPackage(youtube)

@@ -75,10 +75,16 @@ object AiChat {
         }
     }
 
-    fun ask(keyRaw: String, history: List<Turn>, question: String, facts: String = ""): Answer {
+    /** english: user ne abhi English me bola (true) / Hindi-Hinglish me (false) / pata nahi (null) */
+    fun ask(keyRaw: String, history: List<Turn>, question: String, facts: String = "", english: Boolean? = null): Answer {
         // Copy-paste me aayi space / nayi line hata do (warna request hi nahi jaati)
         val key = keyRaw.filter { !it.isWhitespace() }
-        val system = systemFor(facts)
+        val lang = when (english) {
+            true -> "\n\nRight now Rahul is speaking ENGLISH: reply in English (both parts in English), even if earlier messages were Hindi."
+            false -> "\n\nRight now Rahul is speaking Hindi/Hinglish: reply in Hindi (Devanagari part, then Roman Hinglish part)."
+            null -> ""
+        }
+        val system = systemFor(facts) + lang
         var raw = if (key.startsWith("sk-ant-")) anthropic(key, history, question, system) else gemini(key, history, question, system)
         // "|||MEM: Rahul's gym is at 6 pm" — yaad rakhne wali baat alag nikaalo
         var memory: String? = null

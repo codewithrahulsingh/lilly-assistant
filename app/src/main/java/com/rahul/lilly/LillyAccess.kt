@@ -1,6 +1,7 @@
 package com.rahul.lilly
 
 import android.accessibilityservice.AccessibilityService
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.media.AudioManager
@@ -11,20 +12,29 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * Spotify me gaana sach me chalane ke liye: Lilly Spotify me gaana search karti hai,
- * phir ye service search results me pehle "Song" par khud tap kar deti hai.
- *
- * Sirf Spotify ki screen dekhti hai (accessibility config me packageNames = Spotify),
- * aur sirf tab kuch karti hai jab Lilly ne abhi-abhi gaana chalane ko kaha ho.
+ * Lilly ke "haath": jab aap kehte ho tabhi, kuch chuni hui jagah button dabana —
+ * - Spotify: search ke baad pehle gaane par tap (gaana bajne lage)
+ * - WhatsApp: message ka "Send" / "Voice call" / "Video call"
+ * - Phone ki call screen: "Speaker"
+ * Aur agar aap "Read my notifications" ON karo, toh naye notifications yaad rakhna (sirf RAM me,
+ * phone band/Lilly band hote hi mit jaate hain) taaki "kiska message aaya?" ka jawab de sake.
  */
 class LillyAccess : AccessibilityService() {
 
+    data class Note(val app: String, val pkg: String, val title: String, val text: String, val at: Long)
+
+    private class Job(
+        val kind: String, // spotify, wa_send, wa_call, wa_video, speaker
+        val query: String,
+        val until: Long
+    )
+
     companion object {
         @Volatile private var instance: LillyAccess? = null
-        @Volatile private var wanted: String? = null
-        @Volatile private var deadline = 0L
-        @Volatile private var tapped = false
+        @Volatile private var job: Job? = null
         private const val SPOTIFY = "com.spotify.music"
+        private val WA = setOf("com.whatsapp", "com.whatsapp.w4b")
+        private val notes = ArrayList<Note>()
 
         /** Accessibility me Lilly ON hai? */
         fun enabled(ctx: Context): Boolean {
@@ -36,12 +46,32 @@ class LillyAccess : AccessibilityService() {
             return list.split(':').any { it.equals(me, ignoreCase = true) }
         }
 
-        /** Lilly ne Spotify me ye gaana search kiya hai — results aate hi pehle gaane par tap karo */
-        fun playOnSpotify(query: String) {
-            wanted = query
-            deadline = System.currentTimeMillis() + 15_000
-            tapped = false
+        private fun start(kind: String, query: String, ms: Long) {
+            job = Job(kind, query, System.currentTimeMillis() + ms)
             instance?.startTrying()
+        }
+
+        /** Spotify me ye gaana search hua hai — results aate hi pehle gaane par tap */
+        fun playOnSpotify(query: String) = start("spotify", query, 15_000)
+
+        /** WhatsApp chat khulte hi "Send" dabao */
+        fun sendWhatsApp() = start("wa_send", "", 12_000)
+
+        /** WhatsApp chat me "Voice call" / "Video call" dabao */
+        fun callOnWhatsApp(video: Boolean) = start(if (video) "wa_video" else "wa_call", "", 12_000)
+
+        /** Call screen par "Speaker" dabao */
+        fun pressSpeaker() = start("speaker", "", 15_000)
+
+        /** Naye notifications (sabse naya pehle). app = "" sab, ya "whatsapp" */
+        fun recentNotes(app: String, sinceMs: Long): List<Note> = synchronized(notes) {
+            val now = System.currentTimeMillis()
+            notes.filter { now - it.at <= sinceMs && (app.isBlank() || it.pkg.contains(app) || it.app.lowercase().contains(app)) }
+                .reversed()
+        }
+
+        fun clearNotes(app: String) = synchronized(notes) {
+            notes.removeAll { app.isBlank() || it.pkg.contains(app) || it.app.lowercase().contains(app) }
         }
     }
 
@@ -55,17 +85,59 @@ class LillyAccess : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) instance = null
+        synchronized(notes) { notes.clear() }
         super.onDestroy()
     }
 
     override fun onInterrupt() {}
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName?.toString() != SPOTIFY) return
-        if (active()) main.postDelayed({ tryTap() }, 400)
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            keepNotification(event)
+            return
+        }
+        if (active()) {
+            main.removeCallbacks(tapRunnable)
+            main.postDelayed(tapRunnable, 350)
+        }
     }
 
-    private fun active(): Boolean = wanted != null && !tapped && System.currentTimeMillis() < deadline
+    // ---------------- Notifications (sirf user ne ON kiya ho) ----------------
+
+    private fun keepNotification(event: AccessibilityEvent) {
+        val prefs = getSharedPreferences("lilly", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("read_notifs", false)) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName || pkg == "android" || pkg.startsWith("com.android.systemui")) return
+        val n = event.parcelableData as? Notification ?: return
+        if (n.flags and Notification.FLAG_ONGOING_EVENT != 0) return // gaana, download, call — chhodo
+        if (n.category == Notification.CATEGORY_TRANSPORT || n.category == Notification.CATEGORY_PROGRESS ||
+            n.category == Notification.CATEGORY_SERVICE || n.category == Notification.CATEGORY_SYSTEM) return
+        val ex = n.extras ?: return
+        val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+        val text = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: ex.getCharSequence(Notification.EXTRA_TEXT))
+            ?.toString()?.trim() ?: ""
+        if (title.isBlank() && text.isBlank()) return
+        val app = try {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+        } catch (e: Exception) { pkg }
+        synchronized(notes) {
+            notes.removeAll { it.pkg == pkg && it.title == title && it.text == text }
+            notes.add(Note(app, pkg, title, text.take(300), System.currentTimeMillis()))
+            while (notes.size > 40) notes.removeAt(0)
+        }
+    }
+
+    // ---------------- Button dabana ----------------
+
+    private fun active(): Boolean {
+        val j = job ?: return false
+        if (System.currentTimeMillis() > j.until) { job = null; return false }
+        return true
+    }
+
+    private val tapRunnable = Runnable { tryTap() }
 
     private fun startTrying() {
         tries = 0
@@ -74,28 +146,55 @@ class LillyAccess : AccessibilityService() {
             override fun run() {
                 if (!active()) return
                 tryTap()
-                if (++tries < 20) main.postDelayed(this, 700)
+                if (++tries < 25) main.postDelayed(this, 600)
             }
         }
-        main.postDelayed(loop, 1200)
+        main.postDelayed(loop, 900)
     }
 
-    /** Search results me pehla gaana dhoondh kar tap */
     private fun tryTap() {
+        val j = job ?: return
         if (!active()) return
         val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return
-        if (root.packageName?.toString() != SPOTIFY) return
-        val target = findSongRow(root) ?: return
-        if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            tapped = true
-            // Gaane ki jagah artist/album khul gaya ho toh wahan "Play" dabao
-            main.postDelayed({ pressPlayIfSilent() }, 2500)
+        val pkg = root.packageName?.toString() ?: return
+        if (pkg == packageName) return
+        when (j.kind) {
+            "spotify" -> {
+                if (pkg != SPOTIFY) return
+                val row = findSongRow(root, j.query) ?: return
+                if (row.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    job = null
+                    main.postDelayed({ pressPlayIfSilent() }, 2500)
+                }
+            }
+            "wa_send" -> {
+                if (pkg !in WA) return
+                val send = root.findAccessibilityNodeInfosByViewId("$pkg:id/send").firstOrNull()
+                    ?: byLabel(root, setOf("send", "भेजें", "भेजे", "bhejen"))
+                if (clickable(send)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) job = null
+            }
+            "wa_call", "wa_video" -> {
+                if (pkg !in WA) return
+                val names = if (j.kind == "wa_video") setOf("video call", "वीडियो कॉल") else setOf("voice call", "call", "वॉइस कॉल", "कॉल")
+                val btn = byLabel(root, names) ?: return
+                if (clickable(btn)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) job = null
+            }
+            "speaker" -> {
+                if (!Regex("dialer|incall|telecom|phone|contacts|call", RegexOption.IGNORE_CASE).containsMatchIn(pkg)) return
+                val spk = findAll(root) { n ->
+                    val l = ((n.contentDescription ?: n.text)?.toString() ?: "").trim().lowercase()
+                    n.isVisibleToUser && (l == "speaker" || l == "speakerphone" || l == "loudspeaker" ||
+                        l == "स्पीकर" || l.startsWith("speaker") || l.contains("speaker,"))
+                }.firstOrNull() ?: return
+                if (spk.isCheckable && spk.isChecked) { job = null; return }
+                if (clickable(spk)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) job = null
+            }
         }
     }
 
     private fun pressPlayIfSilent() {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        if (am.isMusicActive) { wanted = null; return }
+        if (am.isMusicActive) return
         val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return
         if (root.packageName?.toString() != SPOTIFY) return
         val play = findAll(root) { n ->
@@ -103,14 +202,13 @@ class LillyAccess : AccessibilityService() {
             (d == "play" || d.startsWith("play ") || d.contains("shuffle play")) && n.isVisibleToUser
         }.firstOrNull()
         clickable(play)?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        wanted = null
     }
 
     /**
      * Spotify search results me har gaane ke neeche "Song • Artist" likha hota hai.
      * Sabse upar wala aisa row chuno. Na mile toh jis row me gaane ka naam ho wo.
      */
-    private fun findSongRow(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    private fun findSongRow(root: AccessibilityNodeInfo, query: String): AccessibilityNodeInfo? {
         val songRe = Regex("""^(?:e\s*)?(?:song|gaana|गाना|canción|chanson)\s*[•·]""", RegexOption.IGNORE_CASE)
         val songLabels = findAll(root) { n ->
             val t = n.text?.toString()?.trim() ?: return@findAll false
@@ -118,8 +216,7 @@ class LillyAccess : AccessibilityService() {
         }
         topMost(songLabels.mapNotNull { clickable(it) })?.let { return it }
 
-        // Dusra tareeka: gaane ke naam wala row (search box ke alawa)
-        val q = Parser.normName(wanted ?: return null).split(" ").filter { it.length >= 3 }
+        val q = Parser.normName(query).split(" ").filter { it.length >= 3 }
         if (q.isEmpty()) return null
         // Search box ke neeche wale hi (search box me bhi wahi naam likha hota hai)
         val r = android.graphics.Rect()
@@ -130,6 +227,13 @@ class LillyAccess : AccessibilityService() {
         }.filter { n -> n.getBoundsInScreen(r); r.top > boxBottom }
         return topMost(byName.mapNotNull { clickable(it) }.filter { !it.isEditable && run { it.getBoundsInScreen(r); r.top >= boxBottom } })
     }
+
+    /** Button jiska naam (contentDescription / text) inme se ho */
+    private fun byLabel(root: AccessibilityNodeInfo, names: Set<String>): AccessibilityNodeInfo? =
+        findAll(root) { n ->
+            val l = ((n.contentDescription ?: n.text)?.toString() ?: "").trim().lowercase()
+            n.isVisibleToUser && l in names
+        }.firstOrNull()
 
     private fun clickable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         var cur = n

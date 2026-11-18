@@ -192,7 +192,7 @@ class ParserTest {
         assertEquals(Cmd.Chat("who"), p("what's your name"))
         assertEquals(Cmd.Chat("joke"), p("tell me a joke"))
         assertEquals(Cmd.Chat("bye"), p("never mind"))
-        assertEquals(Cmd.Chat("hello"), p("good morning"))
+        assertEquals(RoutineCmd("morning"), p("good morning"))
         assertEquals(Cmd.Chat("help"), p("what can you do"))
         assertTrue(p("who is the prime minister of india") is Cmd.Unknown)
     }
@@ -585,5 +585,109 @@ class MusicWakeTest {
         assertTrue(!WakeCheck.accept(j("[unk]" to 1.0, "lily" to 0.6, "[unk]" to 1.0), "normal", noisy = true))
         // Asli shabd bahut zyada = baat-cheet
         assertTrue(!WakeCheck.accept(j("hello" to 0.9, "hi" to 0.8, "hey" to 0.9, "lily" to 0.9), "normal", noisy = true))
+    }
+}
+
+class NewFeaturesTest {
+    private fun p(s: String) = Parser.parse(s)
+
+    @Test fun spokenNumbers() {
+        assertEquals(Cmd.Call("9876543210"), p("call nine eight seven six five four three two one zero"))
+        assertEquals(Cmd.Call("9876543210"), p("नौ आठ सात छह पांच चार तीन दो एक शून्य पर कॉल करो".replace("छह", "छे")))
+        assertEquals(Cmd.Call("9988776655"), p("call double nine double eight double seven double six double five"))
+        assertEquals(Cmd.Call("9876543210"), p("call 98765 43210"))
+        assertEquals("rohit ko call kar do", Parser.normalize("Rohit ko call kar do"))
+        assertEquals("ek do teen", Parser.normalize("ek do teen"))
+    }
+
+    @Test fun whatsappMessages() {
+        assertEquals(WhatsAppCmd("rohit", "main 10 minute mein aa raha hoon"), p("Rohit ko WhatsApp pe bolo main 10 minute mein aa raha hoon"))
+        assertEquals(WhatsAppCmd("rohit", "main 10 minute mein aa raha hoon"), p("Rohit ko WhatsApp par likho ki main 10 minute mein aa raha hoon"))
+        assertEquals(WhatsAppCmd("rohit", "main aa raha hoon"), p("rohit ko whatsapp pe main aa raha hoon bhej do"))
+        assertEquals(WhatsAppCmd("mom", "i'll be late"), p("send a WhatsApp to mom saying I'll be late"))
+        assertEquals(WhatsAppCmd("rohit", "i'm coming"), p("tell Rohit on WhatsApp that I'm coming"))
+        assertEquals(WhatsAppCmd("rohit", ""), p("Rohit ko WhatsApp karo"))
+        assertEquals(WhatsAppCmd("papa", ""), p("send a whatsapp message to papa"))
+        assertEquals(Cmd.OpenApp("whatsapp"), p("WhatsApp kholo"))
+        assertEquals(Cmd.OpenApp("whatsapp"), p("open WhatsApp"))
+    }
+
+    @Test fun whatsappCalls() {
+        assertEquals(WhatsAppCmd("rohit", kind = "call"), p("Rohit ko WhatsApp call karo"))
+        assertEquals(WhatsAppCmd("rohit", kind = "video"), p("Rohit ko WhatsApp pe video call karo"))
+        assertEquals(WhatsAppCmd("mom", kind = "call"), p("WhatsApp call mom"))
+        assertEquals(WhatsAppCmd("rohit", kind = "video"), p("video call Rohit on WhatsApp"))
+        assertEquals(WhatsAppCmd("papa", kind = "call"), p("call papa on whatsapp"))
+    }
+
+    @Test fun mapsAndPlaces() {
+        assertEquals(NavigateCmd("home"), p("ghar ka rasta dikhao"))
+        assertEquals(NavigateCmd("home"), p("navigate to home"))
+        assertEquals(NavigateCmd("office"), p("take me to office"))
+        assertEquals(NavigateCmd("hawa mahal", "w"), p("hawa mahal ka rasta batao paidal"))
+        assertEquals(NavigateCmd("sms hospital"), p("SMS hospital kaise jaun"))
+        assertEquals(NavigateCmd("jaipur airport"), p("directions to Jaipur airport"))
+        assertEquals(NearbyCmd("petrol pump"), p("nearest petrol pump"))
+        assertEquals(NearbyCmd("atm"), p("ATM near me"))
+        assertEquals(NearbyCmd("petrol pump"), p("paas mein petrol pump"))
+        assertEquals(SaveAddressCmd("home", "malviya nagar jaipur"), p("my home address is Malviya Nagar Jaipur"))
+        assertEquals(SaveAddressCmd("home", "malviya nagar jaipur"), p("mera ghar malviya nagar jaipur mein hai"))
+    }
+
+    @Test fun notificationsRoutineWeather() {
+        assertEquals(NotificationsCmd(), p("kiska message aaya"))
+        assertEquals(NotificationsCmd(), p("read my notifications"))
+        assertEquals(NotificationsCmd("whatsapp"), p("WhatsApp pe kiska message aaya"))
+        assertEquals(RoutineCmd("morning"), p("Good morning Lilly"))
+        assertEquals(RoutineCmd("morning"), p("suprabhat"))
+        assertEquals(RoutineCmd("night"), p("good night"))
+        assertEquals(WeatherCmd(), p("aaj mausam kaisa hai"))
+        assertEquals(WeatherCmd(), p("what's the weather"))
+        assertEquals(WeatherCmd("tomorrow"), p("kal barish hogi kya"))
+        assertEquals(WeatherCmd("tomorrow"), p("will it rain tomorrow"))
+    }
+
+    @Test fun phoneSettings() {
+        assertEquals(SettingCmd("dnd", "on"), p("do not disturb on karo"))
+        assertEquals(SettingCmd("dnd", "off"), p("DND band karo"))
+        assertEquals(SettingCmd("brightness", "down"), p("brightness kam karo"))
+        assertEquals(SettingCmd("brightness", "max"), p("full brightness"))
+        assertEquals(SettingCmd("brightness", "50"), p("set brightness to 50 percent"))
+        assertEquals(SettingCmd("ringer", "silent"), p("phone silent karo"))
+        assertEquals(SettingCmd("ringer", "vibrate"), p("vibrate mode on karo"))
+        assertEquals(SettingCmd("ringer", "normal"), p("normal mode"))
+        assertEquals(SettingCmd("panel", "wifi"), p("WiFi settings kholo"))
+        assertEquals(SettingCmd("panel", "bluetooth"), p("bluetooth on karo"))
+        assertEquals(SettingCmd("panel", "hotspot"), p("hotspot on karo"))
+        assertEquals(Cmd.Volume("mute"), p("mute karo"))
+        assertEquals(Cmd.Battery, p("battery kitni hai"))
+    }
+
+    @Test fun youtubeVideos() {
+        assertEquals(Cmd.PlayMusic("cricket highlights", "youtube"), p("YouTube pe cricket highlights chalao"))
+        assertEquals(Cmd.PlayMusic("cricket highlights", "youtube"), p("YouTube par cricket highlights dikhao"))
+        assertEquals(Cmd.PlayMusic("mr beast", "youtube"), p("play mr beast on youtube"))
+    }
+}
+
+class LanguageAndTextTest {
+    @Test fun keepsHowYouSpokeTheMessage() {
+        assertEquals("main 10 minute mein aa raha hoon",
+            Parser.originalSpan("Rohit ko WhatsApp pe bolo main 10 minute mein aa raha hoon", "main 10 minute mein aa raha hoon"))
+        assertEquals("I'll be late", Parser.originalSpan("send a WhatsApp to mom saying I'll be late", "i'll be late"))
+        val hi = "रोहित को व्हाट्सएप पर बोलो मैं दस मिनट में आ रहा हूँ"
+        val c = Parser.parse(hi) as WhatsAppCmd
+        assertEquals("रोहित".let { Parser.roman(it).lowercase() }, c.target)
+        assertEquals("मैं दस मिनट में आ रहा हूँ", Parser.originalSpan(hi, c.text))
+        assertEquals(SaveAddressCmd("city", "jaipur"), Parser.parse("my city is Jaipur"))
+        assertEquals(SaveAddressCmd("city", "jaipur"), Parser.parse("mera shehar jaipur hai"))
+    }
+
+    @Test fun languageFollowsSpeaker() {
+        assertTrue(Parser.isEnglish("send a WhatsApp to mom saying I'll be late"))
+        assertTrue(Parser.isEnglish("what's the weather"))
+        assertTrue(!Parser.isEnglish("mausam kaisa hai"))
+        assertTrue(!Parser.isEnglish("ghar ka rasta dikhao"))
+        assertTrue(!Parser.isEnglish("रोहित को व्हाट्सएप पर बोलो"))
     }
 }

@@ -6,6 +6,12 @@
     <!-- "Call X on speaker": call me speaker on karne ke liye -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Mausam: andaazan jagah (shehar) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- "Do not disturb on karo" / "phone silent karo" -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- "Brightness kam karo" -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <!-- "Subah 6 baje ka alarm" -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- Sirf "AI baat-cheet" ke liye, jab user apni key daale -->
@@ -31,6 +37,9 @@
         <intent><action android:name="android.intent.action.SHOW_ALARMS" /></intent>
         <intent><action android:name="android.intent.action.DISMISS_ALARM" /></intent>
         <package android:name="com.spotify.music" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.google.android.apps.maps" />
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
         <intent>
@@ -72,11 +81,11 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Spotify auto-play: sirf Spotify ki screen par, gaana search hone ke baad tap -->
+        <!-- Lilly ke "haath": Spotify gaana, WhatsApp send/call, call screen speaker; aur (ON ho toh) notifications -->
         <service
             android:name=".LillyAccess"
             android:exported="true"
-            android:label="Lilly Spotify auto-play"
+            android:label="Lilly helper"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

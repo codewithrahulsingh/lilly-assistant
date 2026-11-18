@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="access_desc">Lets Lilly tap the first song after she searches it in Spotify, so the song actually starts playing. Lilly only looks at the Spotify app, and only right after you ask her to play something. Nothing is read or sent anywhere.</string>
+    <string name="access_desc">Lets Lilly press buttons for you, only right after you ask: the first song in Spotify, Send or Call in WhatsApp, and Speaker on the call screen. If you turn on "Read my notifications" in the Lilly app, she also keeps your latest notifications in memory (never saved or sent anywhere) so she can read them out when you ask.</string>
 </resources>

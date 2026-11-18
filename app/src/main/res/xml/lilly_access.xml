@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Sirf Spotify ki screen: gaana search hone ke baad pehle gaane par tap -->
+<!--
+  Lilly sirf tab button dabati hai jab aapne abhi kaha ho: Spotify (gaana), WhatsApp (send / call),
+  call screen (speaker). Notifications sirf tab yaad rakhti hai jab app me "Read my notifications" ON ho.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeNotificationStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:description="@string/access_desc"
-    android:notificationTimeout="200"
-    android:packageNames="com.spotify.music" />
+    android:notificationTimeout="200" />

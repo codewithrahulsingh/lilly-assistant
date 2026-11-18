@@ -113,7 +113,7 @@ object Parser {
         "बाद" to "baad", "सुबह" to "subah", "शाम" to "shaam", "रात" to "raat", "दोपहर" to "dopahar",
         "साढ़े" to "sadhe", "सवा" to "sava", "पौने" to "paune", "डेढ़" to "dedh", "ढाई" to "dhai",
         "दिलाना" to "dilana", "दिला" to "dila", "जगाना" to "jagana", "रोज" to "roz", "रोज़" to "roz",
-        "स्पीकर" to "speaker", "याद" to "yaad", "रखना" to "rakhna", "रखो" to "rakho", "रखिए" to "rakhiye",
+        "शून्य" to "shunya", "स्पीकर" to "speaker", "याद" to "yaad", "रखना" to "rakhna", "रखो" to "rakho", "रखिए" to "rakhiye",
         "भूल" to "bhool", "जाओ" to "jao", "बारे" to "baare", "पता" to "pata", "जानती" to "jaanti",
         "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
     )
@@ -306,6 +306,7 @@ object Parser {
     private const val DO_WORDS = "karo|kar do|kardo|lagao|laga do|kijiye|karna|karein|milao|mila do|please"
     private val callPatterns = listOf(
         Regex("""^(.+?)\s+(?:ko|se)\s+(?:$CALL_WORDS)(?:\s+.*)?$""", ic),
+        Regex("""^(\+?\d{5,})\s+(?:pe|par|per|on)\s+(?:$CALL_WORDS)(?:\s+.*)?$""", ic),
         Regex("""^(?:please\s+)?(?:$CALL_WORDS)\s+(?:karo\s+|kar do\s+|lagao\s+|to\s+)?(.+?)(?:\s+ko)?(?:\s+(?:$DO_WORDS))?$""", ic),
         Regex("""^(.+?)\s+(?:$CALL_WORDS)\s+(?:$DO_WORDS)$""", ic),
         Regex("""^(?:make|place)\s+a\s+(?:phone\s+)?call\s+to\s+(.+)$""", ic),
@@ -351,7 +352,7 @@ object Parser {
 
     private val onAppPatterns = listOf(
         Regex("""^(?:open\s+)?(spotify|youtube)\s+(?:and|aur)\s+(?:play\s+)?(.+?)(?:\s+(?:$PLAY_VERBS))?$""", ic) to false,
-        Regex("""^(spotify|youtube)\s+(?:par|pe|me|mein|on|se)\s+(.+?)\s+(?:$PLAY_VERBS|search karo|dhundo|dikhao|dikha do)(?:\s+please)?$""", ic) to false,
+        Regex("""^(spotify|youtube)\s+(?:par|pe|me|mein|on|se)\s+(.+?)\s+(?:$PLAY_VERBS|search karo|dhundo|dikhao|dikha do|dekhna hai|dekhni hai|dekhao|lagao)(?:\s+please)?$""", ic) to false,
         Regex("""^(?:play|search for|search|find|look up)\s+(.+?)\s+(?:on|in)\s+(spotify|youtube)$""", ic) to true,
         Regex("""^(.+?)\s+(spotify|youtube)\s+(?:par|pe|me|mein)\s+(?:$PLAY_VERBS)(?:\s+please)?$""", ic) to true
     )
@@ -530,6 +531,75 @@ object Parser {
 
     // ---------- Main: text -> Cmd ----------
 
+    /**
+     * Normalize kiye text ka hissa asli bole gaye roop me: "main 10 minute mein aa raha hoon"
+     * -> jaisa bola tha (Hindi lipi ho toh Hindi lipi me, capital letters samet).
+     */
+    fun originalSpan(original: String, extracted: String): String {
+        val orig = original.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        fun clean(x: String) = roman(x).lowercase(Locale.ROOT).replace('’', '\'').replace(Regex("[^a-z0-9']"), "")
+        val norm = orig.map { clean(it) }
+        val ext = extracted.split(" ").filter { it.isNotBlank() }.map { it.replace(Regex("[^a-z0-9']"), "") }
+        if (ext.isEmpty() || ext.size > orig.size) return extracted
+        for (i in 0..orig.size - ext.size) {
+            if (ext.indices.all { norm[i + it] == ext[it] }) {
+                return orig.subList(i, i + ext.size).joinToString(" ").trim(',', ';', '।')
+            }
+        }
+        return extracted
+    }
+
+    // ---------- Bole gaye number ----------
+
+    private val digitWords = mapOf(
+        "zero" to "0", "shunya" to "0", "sunya" to "0", "shuny" to "0", "sunny" to "0", "shunye" to "0", "shoonya" to "0", "sifar" to "0",
+        "one" to "1", "ek" to "1", "two" to "2", "do" to "2", "three" to "3", "teen" to "3", "tin" to "3",
+        "four" to "4", "char" to "4", "chaar" to "4", "five" to "5", "paanch" to "5", "panch" to "5",
+        "six" to "6", "chhe" to "6", "che" to "6", "chah" to "6", "chhah" to "6", "seven" to "7", "saat" to "7", "sat" to "7",
+        "eight" to "8", "aath" to "8", "ath" to "8", "nine" to "9", "nau" to "9"
+    )
+    private val repeatWords = mapOf("double" to 2, "dabal" to 2, "dubal" to 2, "triple" to 3, "tripal" to 3, "tipal" to 3)
+
+    /**
+     * Phone number bolke: "nine eight seven six five four three two one zero" / "नौ आठ सात…" /
+     * "double five" / "98765 43210" -> "9876543210". Sirf lambi ginti (5+ ank) badalti hai,
+     * taaki "do" (karo) / "ek" jaise aam shabd na chhede.
+     */
+    fun spokenDigits(t: String): String {
+        val w = t.split(" ")
+        val out = ArrayList<String>()
+        var i = 0
+        while (i < w.size) {
+            // Yahan se ginti ka silsila kitna lamba hai?
+            var j = i
+            val digits = StringBuilder()
+            var tokens = 0
+            var words = 0
+            while (j < w.size) {
+                val tok = w[j]
+                val rep = repeatWords[tok]
+                if (rep != null && j + 1 < w.size) {
+                    val d = digitWords[w[j + 1]] ?: w[j + 1].takeIf { it.length == 1 && it[0].isDigit() }
+                    if (d != null) { repeat(rep) { digits.append(d) }; tokens += 2; words++; j += 2; continue }
+                }
+                val d = digitWords[tok] ?: tok.takeIf { it.isNotEmpty() && it.length <= 6 && it.all { c -> c.isDigit() } }
+                if (d == null) break
+                if (tok in digitWords) words++
+                digits.append(d)
+                tokens++
+                j++
+            }
+            if (tokens >= 2 && digits.length >= 5 && (words >= 4 || words == 0 || digits.length >= 8)) {
+                out.add(digits.toString())
+                i = j
+            } else {
+                out.add(w[i])
+                i++
+            }
+        }
+        return out.joinToString(" ")
+    }
+
     private val politeLead = Regex(
         """^(?:(?:please|pls|plz|kindly|ok|okay|can you|could you|would you|will you|can u|i want you to|i want to|""" +
             """i would like to|i'd like to|i need you to|i need to|go ahead and|kya tum|kya aap|zara|jara)\s+)+"""
@@ -538,8 +608,10 @@ object Parser {
 
     /** Chhote akshar, viraam chinh hatao, "please / can you / zara" jaise shabd hatao */
     fun normalize(input: String): String {
-        val t = roman(input).lowercase(Locale.ROOT).replace('’', '\'')
-            .replace(Regex("[,.!?।]"), " ").replace(Regex("\\s+"), " ").trim()
+        val t = spokenDigits(
+            roman(input).lowercase(Locale.ROOT).replace('’', '\'')
+                .replace(Regex("[,.!?।]"), " ").replace(Regex("\\s+"), " ").trim()
+        )
         val core = t.replace(politeLead, "").replace(politeTail, "").trim()
         return core.ifBlank { t }
     }
@@ -556,6 +628,9 @@ object Parser {
 
         // Alarm / timer / reminder
         alarmCmd(t)?.let { return it }
+
+        // WhatsApp, rasta, notifications, good morning, mausam, phone settings
+        MoreCommands.parse(t)?.let { return it }
 
         // "Rohit ko speaker pe call karo" / "call Rohit on speaker"
         if (Regex("""\bspeaker""").containsMatchIn(t)) {
