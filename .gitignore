@@ -5,3 +5,7 @@ local.properties
 *.iml
 app/src/main/assets/model-en-in/
 model.zip
+app/libs/
+voice.tar.bz2
+voice-hi-female.zip
+vits-piper-*/

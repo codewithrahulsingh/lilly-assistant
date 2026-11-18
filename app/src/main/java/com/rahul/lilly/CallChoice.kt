@@ -68,6 +68,27 @@ object CallChoice {
     /** Screen par: "1. Mobile …3210" */
     fun numberLine(i: Int, p: Phone) = "${i + 1}. ${p.label.ifBlank { "Number" }} …${lastDigits(p.number)}"
 
+    /**
+     * Ek hi insaan do baar save ho ("Kunal Bhai", "Kunal Bhai New" — dono ka number same):
+     * ek hi maano. Jinke number bilkul same hain unme se pehla naam rakho.
+     */
+    fun collapseSameNumbers(names: List<String>, rows: List<Phone>): List<String> {
+        val seen = HashMap<Set<String>, String>()
+        val out = ArrayList<String>()
+        for (n in names) {
+            val nums = rows.filter { it.name == n }.map { digitsKey(it.number) }.filter { it.length >= 5 }.toSet()
+            if (nums.isEmpty()) { out.add(n); continue }
+            if (seen.containsKey(nums)) continue
+            seen[nums] = n
+            out.add(n)
+        }
+        return out
+    }
+
+    /** Sab naamon me kul kitne alag number hain — 1 ho toh seedha usi par */
+    fun distinctNumbers(names: List<String>, rows: List<Phone>): List<Phone> =
+        dedupe(rows.filter { it.name in names })
+
     private val ordinals: List<Pair<Int, Set<String>>> = listOf(
         5 to setOf("sixth", "6th", "six", "chhatha", "chhata", "chhe"),
         6 to setOf("seventh", "7th", "seven", "saatva", "satva", "saat"),

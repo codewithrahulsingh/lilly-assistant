@@ -691,3 +691,19 @@ class LanguageAndTextTest {
         assertTrue(!Parser.isEnglish("रोहित को व्हाट्सएप पर बोलो"))
     }
 }
+
+class SameNumberTest {
+    @Test fun samePersonSavedTwice() {
+        val rows = listOf(
+            CallChoice.Phone("Kunal Bhai", "+91 98290 11111", "Mobile"),
+            CallChoice.Phone("Kunal Bhai New", "098290 11111", "Mobile"),
+            CallChoice.Phone("Kunal Office", "0141 555 6677", "Work")
+        )
+        val both = listOf("Kunal Bhai", "Kunal Bhai New")
+        assertEquals(1, CallChoice.distinctNumbers(both, rows).size)
+        assertEquals(listOf("Kunal Bhai"), CallChoice.collapseSameNumbers(both, rows))
+        val all = listOf("Kunal Bhai", "Kunal Bhai New", "Kunal Office")
+        assertEquals(2, CallChoice.distinctNumbers(all, rows).size)
+        assertEquals(listOf("Kunal Bhai", "Kunal Office"), CallChoice.collapseSameNumbers(all, rows))
+    }
+}

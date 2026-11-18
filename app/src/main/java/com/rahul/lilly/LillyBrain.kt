@@ -658,8 +658,12 @@ class LillyBrain(private val ctx: Context) {
         val tied = CallChoice.candidates(targets, rows.map { it.name }) { learner.contactBonus(it) }
         if (tied.isEmpty()) return notFound
         if (tied.size == 1) return callByName(target, tied[0], rows, speaker, favOnly, action, text)
+        // Sab milte-julte naamon ka number ek hi hai ("Kunal Bhai" do baar save) — bina poochhe seedha
+        CallChoice.distinctNumbers(tied, rows).singleOrNull()?.let { return finishContact(target, it, speaker, false, action, text) }
+        val unique = CallChoice.collapseSameNumbers(tied, rows)
+        if (unique.size == 1) return callByName(target, unique[0], rows, speaker, favOnly, action, text)
 
-        val options = tied.map { n -> rows.first { it.name == n } }
+        val options = unique.map { n -> rows.first { it.name == n } }
         val pc = PendingCall(
             target, options, byName = true, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis(),
             action = action, text = text
@@ -734,16 +738,16 @@ class LillyBrain(private val ctx: Context) {
         val lines = o.mapIndexed { i, p -> CallChoice.numberLine(i, p) }.joinToString("\n")
         // Do number ka label same ho ("Mobile", "Mobile") toh aakhri ank bhi bolo
         val sameLabels = o.map { it.label.lowercase() }.distinct().size < o.size
+        // Number padh kar nahi sunate (lamba aur bekaar) — sirf "pehla Mobile, doosra Work"; ank screen par
         fun spokenOpt(i: Int, p: CallChoice.Phone, hi: Boolean): String {
             val ord = if (hi) ordinalHi.getOrElse(i) { "${i + 1}" } else ordinalEn.getOrElse(i) { "${i + 1}" }
-            val end = CallChoice.lastDigits(p.number).toCharArray().joinToString(" ")
-            val lab = p.label.ifBlank { "number" }
-            return if (sameLabels || p.label.isBlank()) {
-                if (hi) "$ord $lab, जो $end पर खत्म होता है" else "$ord, $lab ending $end"
-            } else "$ord $lab"
+            return if (sameLabels || p.label.isBlank()) ord else "$ord ${p.label}"
         }
         return Reply(
             "$name has ${o.size} numbers:\n$lines\nWhich one?",
+            spokenEn = "${CallChoice.speakName(name)} has ${o.size} numbers: " +
+                o.mapIndexed { i, p -> spokenOpt(i, p, false) }.joinToString(", ") + ". Which one?",
+            spoken =
             "${CallChoice.speakName(name)} के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर ${if (pc.action == "wa_msg") "भेजूँ" else "कॉल करूँ"}?",
             endChat = false
         )

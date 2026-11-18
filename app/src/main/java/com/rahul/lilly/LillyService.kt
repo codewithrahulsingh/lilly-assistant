@@ -280,7 +280,8 @@ class LillyService : Service() {
             LillyBus.running = true
             getSystemService(NotificationManager::class.java).cancel(START_NOTIF_ID)
             loadWakeModel()
-            prefetchVoice()
+            OfflineVoice.warmUp(this)
+            if (voiceSource() == "gemini") prefetchVoice()
             listen(Mode.WAKE)
             scheduleWatchdog()
         }
@@ -427,6 +428,20 @@ class LillyService : Service() {
 
     private val realVoice by lazy { RealVoice(this) }
 
+    /** "offline" (download ki hui insaani awaaz), "gemini" (online) ya "phone" */
+    private fun voiceSource(): String {
+        val saved = prefs.getString("voice_source", null)
+        val offline = OfflineVoice.installed(this)
+        return when {
+            saved == "offline" && offline -> "offline"
+            saved == "gemini" && realVoice.enabled() -> "gemini"
+            saved == "phone" -> "phone"
+            offline -> "offline"
+            saved == null && realVoice.enabled() -> "gemini"
+            else -> "phone"
+        }
+    }
+
     private fun prefetchVoice() = realVoice.prefetch(
         *(listOf(
             "Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ",
@@ -436,7 +451,10 @@ class LillyService : Service() {
     )
 
     private fun voiceLabel(): String {
-        if (realVoice.enabled()) return realVoice.label()
+        when (voiceSource()) {
+            "offline" -> return "Offline human voice (always the same)"
+            "gemini" -> return realVoice.label()
+        }
         val v = tts?.voice ?: return "default"
         val idx = voiceList.indexOfFirst { it.name == v.name } + 1
         val kind = if (v.isNetworkConnectionRequired) "natural (online)" else "offline"
@@ -444,7 +462,8 @@ class LillyService : Service() {
     }
 
     private fun nextVoice() {
-        if (realVoice.enabled()) {
+        if (voiceSource() == "offline") { testVoice(); return }
+        if (voiceSource() == "gemini") {
             val all = RealVoice.VOICES
             val cur = all.indexOfFirst { it.name == realVoice.voice }
             prefs.edit().putString("real_voice", all[(cur + 1) % all.size].name).apply()
@@ -467,7 +486,7 @@ class LillyService : Service() {
     private fun testVoice() {
         val back = mode == Mode.WAKE || mode == Mode.STOPPED
         val sample = if (english) "Hi Rahul, I'm Lilly. This is how my voice sounds." else "हाय राहुल, मैं लिली हूँ। मेरी आवाज़ ऐसी है।"
-        if (!realVoice.enabled()) {
+        if (voiceSource() != "gemini") {
             say(voiceLabel(), sample) { if (back) listen(Mode.WAKE) }
             return
         }
@@ -544,7 +563,16 @@ class LillyService : Service() {
         val id = "lilly-" + System.nanoTime()
         currentUtterance = id
         handler.removeCallbacks(speakTimeout)
-        if (realVoice.enabled()) {
+        val src = voiceSource()
+        if (src == "offline") {
+            // Phone ke andar wali insaani awaaz: hamesha wahi, bina internet
+            handler.postDelayed(speakTimeout, 10_000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
+            OfflineVoice.speak(this, spoken, prefs.getFloat("voice_speed", 1.0f),
+                onDone = { finishSpeaking(id) },
+                onFail = { if (currentUtterance == id) speakDevice(spoken, id) })
+            return
+        }
+        if (src == "gemini") {
             // Asli insaan jaisi awaaz; na mile toh phone ki awaaz se
             handler.postDelayed(speakTimeout, 6000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
             realVoice.speak(spoken,
@@ -1090,6 +1118,7 @@ class LillyService : Service() {
         recognizer?.destroy()
         recognizer = null
         realVoice.stop()
+        OfflineVoice.stop()
         tts?.stop()
         tts?.shutdown()
         tts = null

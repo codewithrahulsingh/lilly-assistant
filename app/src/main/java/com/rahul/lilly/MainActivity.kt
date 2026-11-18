@@ -240,10 +240,13 @@ class MainActivity : Activity(), LillyBus.Ui {
         lockPopupValue.text = if (canFullScreen()) "Allowed ✓" else "Tap to allow"
         val key = prefs.getString("ai_key", "") ?: ""
         val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
+        val src = prefs.getString("voice_source", null)
         realValue.text = when {
-            key.isBlank() || key.startsWith("sk-ant-") -> "Needs a free Gemini key — tap"
-            rv == RealVoice.OFF -> "OFF — using phone voice"
-            else -> "ON ✓ $rv"
+            OfflineVoice.installed(this) && src != "gemini" && src != "phone" -> "ON ✓ Offline human voice"
+            src == "phone" -> "Phone voice"
+            key.isBlank() || key.startsWith("sk-ant-") -> "Tap to get a human voice"
+            rv == RealVoice.OFF -> "Phone voice"
+            else -> "Gemini voice: $rv (online)"
         }
         val mem = memory()
         val nf = mem.facts().size
@@ -525,7 +528,67 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    /** Awaaz kahan se: offline (hamesha same) / Gemini (online) / phone */
     private fun chooseRealVoice() {
+        val has = OfflineVoice.installed(this)
+        val labels = arrayOf(
+            "⭐ Offline human voice — always the same voice, no internet needed" + if (has) " ✓ downloaded" else " (one-time ${OfflineVoice.PACK_MB} MB download)",
+            "Gemini voices — online, 8 choices, can switch to phone voice when slow or over the limit",
+            "Phone voice — the phone's own text-to-speech"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("🎤 Lilly's voice")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> if (has) useVoice("offline") else downloadOfflineVoice()
+                    1 -> { prefs.edit().putString("voice_source", "gemini").apply(); chooseGeminiVoice() }
+                    else -> useVoice("phone")
+                }
+            }
+            .setNeutralButton(if (has) "Delete offline voice" else "Close") { _, _ ->
+                if (has) {
+                    OfflineVoice.delete(this)
+                    prefs.edit().remove("voice_source").apply()
+                    refreshCards()
+                }
+            }
+            .show()
+    }
+
+    private fun useVoice(src: String) {
+        prefs.edit().putString("voice_source", src).apply()
+        refreshCards()
+        sendToEngine(LillyService.ACTION_TEST_VOICE)
+    }
+
+    private fun downloadOfflineVoice() {
+        val text = label("Starting…", 15f, Color.WHITE).apply { setPadding(dp(24), dp(12), dp(24), dp(4)) }
+        val d = AlertDialog.Builder(this)
+            .setTitle("Downloading Lilly's voice")
+            .setView(text)
+            .setCancelable(false)
+            .setNegativeButton("Hide", null)
+            .show()
+        OfflineVoice.download(this,
+            progress = { p -> text.text = "$p%  (about ${OfflineVoice.PACK_MB} MB — keep the internet on)" },
+            done = { ok, err ->
+                try { d.dismiss() } catch (e: Exception) { }
+                if (isFinishing) return@download
+                if (ok) {
+                    useVoice("offline")
+                    AlertDialog.Builder(this).setTitle("Done ✓")
+                        .setMessage("Lilly now always speaks in the same human voice, even without internet. Listen to her now.")
+                        .setPositiveButton("OK", null).show()
+                } else {
+                    AlertDialog.Builder(this).setTitle("Download didn't finish ✗")
+                        .setMessage("Reason: $err\n\nCheck the internet and try again.")
+                        .setPositiveButton("Try again") { _, _ -> downloadOfflineVoice() }
+                        .setNegativeButton("Close", null).show()
+                }
+            })
+    }
+
+    private fun chooseGeminiVoice() {
         val key = prefs.getString("ai_key", "") ?: ""
         if (key.isBlank() || key.startsWith("sk-ant-")) {
             AlertDialog.Builder(this)
