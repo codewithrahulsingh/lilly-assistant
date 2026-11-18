@@ -27,6 +27,13 @@ sealed class Cmd {
     data class ForgetFact(val what: String) : Cmd()
     /** "Mere baare me kya yaad hai?" */
     object Recall : Cmd()
+    /** label = reminder ka kaam ("call mom"), repeat = "", "daily", "weekdays" */
+    data class Alarm(val at: TimeParse.When, val label: String = "", val repeat: String = "") : Cmd()
+    /** Samay nahi bola — poochho */
+    data class AlarmAsk(val label: String = "", val timer: Boolean = false) : Cmd()
+    data class Timer(val seconds: Int) : Cmd()
+    object ShowAlarms : Cmd()
+    object StopAlarm : Cmd()
     data class Unknown(val text: String) : Cmd()
 }
 
@@ -102,6 +109,10 @@ object Parser {
         "बताओ" to "batao", "बता" to "bata", "वक्त" to "waqt", "लाइट" to "light", "बदलो" to "badlo",
         "दूसरा" to "doosra", "नहीं" to "nahi", "हाँ" to "haan", "हां" to "haan", "मेरा" to "mera", "मेरी" to "meri",
         "मेरे" to "mere", "आप" to "aap", "बात" to "baat", "कराओ" to "karao", "सर्च" to "search",
+        "अलार्म" to "alarm", "टाइमर" to "timer", "मिनट" to "minute", "घंटे" to "ghante", "घंटा" to "ghanta",
+        "बाद" to "baad", "सुबह" to "subah", "शाम" to "shaam", "रात" to "raat", "दोपहर" to "dopahar",
+        "साढ़े" to "sadhe", "सवा" to "sava", "पौने" to "paune", "डेढ़" to "dedh", "ढाई" to "dhai",
+        "दिलाना" to "dilana", "दिला" to "dila", "जगाना" to "jagana", "रोज" to "roz", "रोज़" to "roz",
         "स्पीकर" to "speaker", "याद" to "yaad", "रखना" to "rakhna", "रखो" to "rakho", "रखिए" to "rakhiye",
         "भूल" to "bhool", "जाओ" to "jao", "बारे" to "baare", "पता" to "pata", "जानती" to "jaanti",
         "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
@@ -433,6 +444,48 @@ object Parser {
         return null
     }
 
+    // ---------- Alarm / timer / reminder ----------
+
+    private val alarmWords = Regex("""\b(alarm|alaram|alarum|alarms|jagana|jaga dena|jaga do|utha dena|utha do|uthana|wake me)\b""")
+    private val timerWords = Regex("""\b(timer|countdown)\b""")
+    private val remindWords = Regex("""\b(remind|reminder|yaad dila\w*|yaad karana|yaad karwana)\b""")
+
+    private fun reminderLabel(t: String): String {
+        Regex("""^remind me\s+(?:at|in|after|by)\s+.+?\s+(?:to|about|that)\s+(.+)$""").find(t)?.let { return it.groupValues[1].trim() }
+        Regex("""^(?:set a\s+)?remind(?:er)?\s+(?:me\s+)?(?:to|about|that|for)\s+(.+?)(?:\s+(?:at|in|after|by|tomorrow|today|tonight|every)\b.*)?$""").find(t)?.let {
+            return it.groupValues[1].trim()
+        }
+        Regex("""\byaad\s+(?:dila\w*|karana|karwana)\s+(?:ki|ke|that)\s+(.+)$""").find(t)?.let { return it.groupValues[1].trim() }
+        Regex("""^(?:mujhe\s+)?(.+?)\s+(?:ke liye|ki liye|ka reminder|ki yaad)\s""").find(t)?.let { return it.groupValues[1].trim() }
+        return ""
+    }
+
+    private fun alarmCmd(t: String): Cmd? {
+        val isTimer = timerWords.containsMatchIn(t)
+        val isAlarm = alarmWords.containsMatchIn(t)
+        val isRemind = remindWords.containsMatchIn(t)
+        if (!isTimer && !isAlarm && !isRemind) return null
+        val time = TimeParse.parse(t)
+        if ((isAlarm || isTimer) && time == null &&
+            Regex("""\b(stop|band|bandh|dismiss|cancel|hatao|hata do|off|snooze|delete|remove|chup)\b""").containsMatchIn(t)
+        ) return Cmd.StopAlarm
+        if (isAlarm && time == null &&
+            Regex("""\b(show|list|dikhao|dikha do|kitne|which|what|kaun se|kaunse|check|my alarms)\b""").containsMatchIn(t)
+        ) return Cmd.ShowAlarms
+        if (isTimer && !isAlarm) {
+            val sec = TimeParse.durationSeconds(t) ?: return Cmd.AlarmAsk(timer = true)
+            return Cmd.Timer(sec)
+        }
+        val label = if (isRemind) reminderLabel(t) else ""
+        // "10 minute ka alarm" = 10 minute baad
+        val w = time ?: TimeParse.durationSeconds(t)?.let { TimeParse.When(inMinutes = maxOf(1, it / 60)) }
+            ?: return Cmd.AlarmAsk(label)
+        // "Wake me up at 5:30" / "5 baje jaga dena" — jagana matlab subah
+        val waking = Regex("""\b(wake me|jagana|jaga dena|jaga do|utha dena|utha do|uthana)\b""").containsMatchIn(t)
+        if (waking && w.inMinutes < 0 && w.period.isEmpty() && w.hour in 1..11) return Cmd.Alarm(w.copy(period = "am"), label, TimeParse.repeat(t))
+        return Cmd.Alarm(w, label, TimeParse.repeat(t))
+    }
+
     // ---------- Speaker ----------
 
     private fun stripSpeaker(t: String): String = t
@@ -500,6 +553,9 @@ object Parser {
 
         // Yaaddasht: "yaad rakhna ki…" / "remember that…" / "bhool jao ki…" / "mere baare me kya yaad hai"
         memoryCmd(t)?.let { return it }
+
+        // Alarm / timer / reminder
+        alarmCmd(t)?.let { return it }
 
         // "Rohit ko speaker pe call karo" / "call Rohit on speaker"
         if (Regex("""\bspeaker""").containsMatchIn(t)) {

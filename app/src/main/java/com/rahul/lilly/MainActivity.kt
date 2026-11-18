@@ -41,6 +41,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var realValue: TextView
     private lateinit var memoryValue: TextView
     private lateinit var wakeValue: TextView
+    private lateinit var spotifyValue: TextView
+    private lateinit var updateValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -204,6 +206,10 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r9 = row(col)
         wakeValue = card(r9, "👂", "Wake-up sensitivity") { chooseSensitivity() }
+        spotifyValue = card(r9, "🎧", "Spotify auto-play") { spotifySetup() }
+
+        val r10 = row(col)
+        updateValue = card(r10, "⬆️", "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -232,6 +238,8 @@ class MainActivity : Activity(), LillyBus.Ui {
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
         wakeValue.text = sensLabel(prefs.getString("wake_sens", "normal") ?: "normal")
+        spotifyValue.text = if (LillyAccess.enabled(this)) "ON ✓ songs start by themselves" else "OFF — only searches, tap to fix"
+        updateValue.text = Updater.status(this)
         val learnedCount = learner().items().size
         learnedValue.text = if (learnedCount == 0) "Nothing yet — tap to see how" else "$learnedCount things learned"
         val allowed = prefs.getStringSet("allowed_apps", null)
@@ -606,6 +614,39 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    private fun spotifySetup() {
+        if (LillyAccess.enabled(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Spotify auto-play is ON ✓")
+                .setMessage("Say \"Play Kesariya on Spotify\". Lilly searches it and taps the first song, so it starts playing.\n\nTo turn it off: Settings → Accessibility → Lilly Spotify auto-play.")
+                .setPositiveButton("OK", null)
+                .setNeutralButton("Settings") { _, _ -> tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                .show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("🎧 Make Spotify actually play")
+            .setMessage(
+                "Spotify only opens a search when another app asks; it won't start the song. " +
+                    "With this on, Lilly taps the first song in the results for you.\n\n" +
+                    "• Lilly only looks at the Spotify app, and only right after you ask for a song\n" +
+                    "• Nothing is read or sent anywhere\n\n" +
+                    "Steps:\n" +
+                    "1. Tap \"Open settings\" → Accessibility\n" +
+                    "2. Find \"Lilly Spotify auto-play\" (may be under \"Downloaded apps\" / \"Installed apps\") → turn ON\n\n" +
+                    "If it is greyed out or says \"Restricted setting\":\n" +
+                    "1. Tap \"App info\" below\n" +
+                    "2. Tap ⋮ (3 dots) at the top → \"Allow restricted settings\"\n" +
+                    "3. Come back and do the steps again"
+            )
+            .setPositiveButton("Open settings") { _, _ -> tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .setNeutralButton("App info") { _, _ ->
+                tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
+    }
+
     private fun sensLabel(s: String) = when (s) {
         "low" -> "Low — only a clear “Hey Lilly”"
         "high" -> "High — wakes faster, more mistakes"
@@ -746,6 +787,9 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
                     "🎵  \"Play Kesariya on YouTube\" / \"YouTube par Kesariya chalao\"",
                     "🎵  \"Play Kesariya on Spotify\" / \"Spotify par Kesariya chalao\"",
+                    "⏰  \"Set an alarm for 6 am\" / \"Subah sadhe 6 baje ka alarm\" / \"Har roz 7 baje\"",
+                    "⏰  \"Wake me up in 20 minutes\" / \"10 minute ka timer\"",
+                    "⏰  \"Remind me at 5 pm to call mom\" / \"5 baje yaad dilana ki dawai leni hai\"",
                     "⏯  \"Pause\" / \"Next song\" / \"Gaana band karo\"",
                     "🔊  \"Volume up\" / \"Awaaz kam karo\"",
                     "🔋  \"How much battery is left\" / \"Battery kitni hai\"",
@@ -801,6 +845,8 @@ class MainActivity : Activity(), LillyBus.Ui {
         super.onResume()
         LillyBus.ui = this
         LillyBus.launcher = myLauncher
+        // Nayi version aayi ho toh batao (6 ghante me ek baar, chupchaap)
+        Updater.check(this, userAsked = false) { refreshCards() }
         status.text = LillyBus.lastStatus.ifBlank { "Starting up…" }
         heard.text = LillyBus.lastHeard
         orb.state = LillyBus.lastOrb

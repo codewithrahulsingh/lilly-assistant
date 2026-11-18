@@ -16,6 +16,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -106,6 +107,7 @@ class LillyBrain(private val ctx: Context) {
             .filter { it.isNotBlank() }.distinct()
         if (heard.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true, failed = true)
         answerPendingCall(heard)?.let { return it }
+        answerPendingAlarm(heard)?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
         val reply = decide(texts, allowAi)
@@ -152,6 +154,25 @@ class LillyBrain(private val ctx: Context) {
             Cmd.Battery -> batteryReply()
             is Cmd.Chat -> chatReply(main.topic)
             is Cmd.Teach -> teachReply(main)
+            is Cmd.Alarm -> alarmReply(main)
+            is Cmd.Timer -> timerReply(main.seconds)
+            is Cmd.AlarmAsk -> {
+                pendingAlarm = main
+                pendingAlarmAt = System.currentTimeMillis()
+                when {
+                    main.timer -> Reply("For how long?", "कितनी देर का टाइमर?", endChat = false)
+                    main.label.isNotBlank() -> Reply("At what time should I remind you?", "किस समय याद दिलाऊँ?", endChat = false)
+                    else -> Reply("For what time?", "कितने बजे का अलार्म लगाऊँ?", endChat = false)
+                }
+            }
+            Cmd.ShowAlarms -> Reply("Here are your alarms", "ये रहे आपके अलार्म", {
+                openExternal(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Clock")
+            }, endChat = true)
+            Cmd.StopAlarm -> Reply("Okay", "ठीक है", {
+                val i = Intent(AlarmClock.ACTION_DISMISS_ALARM)
+                if (i.resolveActivity(ctx.packageManager) != null) openExternal(i, "Clock")
+                else openExternal(Intent(AlarmClock.ACTION_SHOW_ALARMS), "Clock")
+            }, endChat = true)
             is Cmd.Unknown -> {
                 // Ye sawaal pehle poochha tha? Saved jawab turant (bina internet, bina limit)
                 val cached = if (allowAi) memory.cachedAnswer(texts.first(), Parser.isEnglish(texts.first())) else null
@@ -165,6 +186,77 @@ class LillyBrain(private val ctx: Context) {
                 )
             }
         }
+    }
+
+    // ---------- Alarm / timer / reminder ----------
+
+    private var pendingAlarm: Cmd.AlarmAsk? = null
+    private var pendingAlarmAt = 0L
+
+    /** "Kitne baje ka?" poochha tha — jawab me samay aaya ho toh lagao */
+    private fun answerPendingAlarm(heard: List<String>): Reply? {
+        val pa = pendingAlarm ?: return null
+        if (System.currentTimeMillis() - pendingAlarmAt > 60_000) { pendingAlarm = null; return null }
+        pendingAlarm = null
+        val t = Parser.normalize(heard.first())
+        if (CallChoice.isCancel(t)) return Reply("Okay", "ठीक है", endChat = true)
+        if (pa.timer) {
+            val sec = heard.firstNotNullOfOrNull { TimeParse.durationSeconds(Parser.normalize(it)) } ?: return null
+            return timerReply(sec)
+        }
+        val w = heard.firstNotNullOfOrNull { h ->
+            val n = Parser.normalize(h)
+            TimeParse.parse(n) ?: TimeParse.durationSeconds(n)?.let { TimeParse.When(inMinutes = maxOf(1, it / 60)) }
+        } ?: return null
+        return alarmReply(Cmd.Alarm(w, pa.label, TimeParse.repeat(t)))
+    }
+
+    private fun alarmReply(a: Cmd.Alarm): Reply {
+        val cal = Calendar.getInstance()
+        val (h, m) = TimeParse.resolve(a.at, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+        val i = Intent(AlarmClock.ACTION_SET_ALARM)
+            .putExtra(AlarmClock.EXTRA_HOUR, h)
+            .putExtra(AlarmClock.EXTRA_MINUTES, m)
+            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, a.label.ifBlank { "Lilly" })
+        val days = when (a.repeat) {
+            "daily" -> arrayListOf(
+                Calendar.SUNDAY, Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY,
+                Calendar.THURSDAY, Calendar.FRIDAY, Calendar.SATURDAY
+            )
+            "weekdays" -> arrayListOf(Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY, Calendar.THURSDAY, Calendar.FRIDAY)
+            else -> null
+        }
+        if (days != null) i.putExtra(AlarmClock.EXTRA_DAYS, days)
+        if (i.resolveActivity(ctx.packageManager) == null) {
+            return Reply("I couldn't find a clock app on this phone", "इस फ़ोन में घड़ी वाला ऐप नहीं मिला", endChat = true, failed = true)
+        }
+        val time = TimeParse.label(h, m)
+        val timeHi = TimeParse.labelHi(h, m)
+        val rep = when (a.repeat) { "daily" -> " every day"; "weekdays" -> " on weekdays"; else -> "" }
+        val repHi = when (a.repeat) { "daily" -> "रोज़ "; "weekdays" -> "सोमवार से शुक्रवार "; else -> "" }
+        val inText = if (a.at.inMinutes >= 0) " (in ${TimeParse.durationLabel(a.at.inMinutes * 60)})" else ""
+        val (en, hi) = if (a.label.isNotBlank()) {
+            Pair("Okay, I'll remind you$rep at $time$inText: ${a.label}", "ठीक है, ${repHi}$timeHi याद दिला दूँगी")
+        } else {
+            Pair("Alarm set for $time$rep$inText", "${repHi}$timeHi का अलार्म लगा दिया")
+        }
+        return Reply(en, hi, { openExternal(i, "Clock") }, endChat = true)
+    }
+
+    private fun timerReply(sec: Int): Reply {
+        val i = Intent(AlarmClock.ACTION_SET_TIMER)
+            .putExtra(AlarmClock.EXTRA_LENGTH, sec)
+            .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, "Lilly")
+        if (i.resolveActivity(ctx.packageManager) == null) {
+            return Reply("I couldn't find a clock app on this phone", "इस फ़ोन में घड़ी वाला ऐप नहीं मिला", endChat = true, failed = true)
+        }
+        return Reply(
+            "Timer set for ${TimeParse.durationLabel(sec)}",
+            "${TimeParse.durationLabelHi(sec)} का टाइमर लगा दिया",
+            { openExternal(i, "Clock") }, endChat = true
+        )
     }
 
     // ---------- Yaaddasht ----------
@@ -613,8 +705,22 @@ class LillyBrain(private val ctx: Context) {
      * Spotify: "play from search" bhejo. Spotify band ho toh pehli baar aksar sirf search dikhata hai,
      * isliye khulne ke baad dekhte hain gaana baja ya nahi — nahi baja toh wahi dobara bhejte hain.
      */
-    private fun spotifyReply(query: String, shown: String, remember: () -> Unit): Reply =
-        Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
+    private fun spotifyReply(query: String, shown: String, remember: () -> Unit): Reply {
+        if (LillyAccess.enabled(ctx)) {
+            // Accessibility ON: Spotify search kholo, results aate hi pehle gaane par tap
+            return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
+                remember()
+                LillyAccess.playOnSpotify(query)
+                openExternal(searchIntent(query).setPackage(spotify), "Spotify")
+            }, endChat = true)
+        }
+        return spotifyWithoutTap(query, shown, remember)
+    }
+
+    private fun spotifyWithoutTap(query: String, shown: String, remember: () -> Unit): Reply =
+        Reply(
+            "Searching $shown on Spotify. To start songs automatically, turn on “Spotify auto-play” in the Lilly app",
+            "स्पॉटिफाई पर $shown ढूँढ रही हूँ", {
             remember()
             val i = searchIntent(query).setPackage(spotify)
             openExternal(i, "Spotify")

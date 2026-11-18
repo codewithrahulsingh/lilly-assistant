@@ -35,15 +35,26 @@ object WakeCheck {
     }
 
     /**
-     * sensitivity: "low" (sirf saaf "Hey Lilly"), "normal", "high" (jaldi jaagti hai, galti bhi zyada)
+     * sensitivity: "low" (sirf saaf "Hey Lilly"), "normal", "high" (jaldi jaagti hai, galti bhi zyada).
+     * noisy = phone par gaana baj raha hai: gaane ke shabd "[unk]" ban kar aas-paas aate hain,
+     * isliye unhe nahi ginte, sirf asli shabd dekhte hain.
      */
-    fun accept(json: String?, sensitivity: String): Boolean {
+    fun accept(json: String?, sensitivity: String, noisy: Boolean = false): Boolean {
         if (json.isNullOrBlank()) return false
         val w = words(json)
         val i = w.indexOfFirst { lilyRe.matches(it.word) }
         if (i < 0) return false
         val lily = w[i]
         val hey = w.getOrNull(i - 1)?.takeIf { it.word in greet }
+        if (noisy) {
+            val others = w.count { it.word != "[unk]" } - 1 - (if (hey != null) 1 else 0)
+            if (others > 1) return false
+            return when (sensitivity) {
+                "low" -> hey != null && lily.conf >= 0.8
+                "high" -> lily.conf >= 0.5
+                else -> if (hey != null) lily.conf >= 0.6 else lily.conf >= 0.85
+            }
+        }
         // Lilly ke aas-paas kitni aur awaaz thi (lamba vakya = shayad TV / baat-cheet)
         val extra = w.size - 1 - (if (hey != null) 1 else 0)
         return when (sensitivity) {

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_desc">Lets Lilly tap the first song after she searches it in Spotify, so the song actually starts playing. Lilly only looks at the Spotify app, and only right after you ask her to play something. Nothing is read or sent anywhere.</string>
+</resources>

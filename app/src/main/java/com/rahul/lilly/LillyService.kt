@@ -134,8 +134,9 @@ class LillyService : Service() {
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         try {
             if (hold && !hasFocus) {
+                // Gaana band nahi, sirf dheema (Siri / Google jaisa); Lilly ke jaate hi wapas poori awaaz
                 hasFocus = am.requestAudioFocus(
-                    focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                 ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             } else if (!hold && hasFocus) {
                 am.abandonAudioFocus(focusListener)
@@ -159,7 +160,7 @@ class LillyService : Service() {
                 val want = arrayListOf(AudioManager.STREAM_SYSTEM, AudioManager.STREAM_NOTIFICATION)
                 // Gaana baj raha ho (aur Lilly ne roka na ho) toh use mat chhedo
                 val musicPlaying = try { am.isMusicActive } catch (e: Exception) { false }
-                if (hasFocus || !musicPlaying) want.add(AudioManager.STREAM_MUSIC)
+                if (!musicPlaying) want.add(AudioManager.STREAM_MUSIC)
                 val done = ArrayList<Int>()
                 for (st in want) {
                     try {
@@ -660,7 +661,9 @@ class LillyService : Service() {
             return Regex("""\b(hey|hi|hello)\s+lil+y\b""").containsMatchIn(text)
         }
         // Vakya poora: har shabd ka bharosa aur vakya ki lambai dekh kar hi jaago
-        return WakeCheck.accept(json, wakeSensitivity)
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val music = try { am.isMusicActive } catch (e: Exception) { false }
+        return WakeCheck.accept(json, wakeSensitivity, noisy = music)
     }
 
     private val voskListener = object : org.vosk.android.RecognitionListener {

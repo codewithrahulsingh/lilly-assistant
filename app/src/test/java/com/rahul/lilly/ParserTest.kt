@@ -513,3 +513,77 @@ class SplitNameAndPagingTest {
         assertEquals("Dr. Bhaiya", short[15])
     }
 }
+
+class AlarmTest {
+    private fun p(s: String) = Parser.parse(s)
+    private fun at(s: String, nowH: Int = 15, nowM: Int = 0): Pair<Int, Int>? {
+        val c = p(s) as? Cmd.Alarm ?: return null
+        return TimeParse.resolve(c.at, nowH, nowM)
+    }
+
+    @Test fun alarmTimes() {
+        assertEquals(Pair(6, 0), at("set an alarm for 6 am"))
+        assertEquals(Pair(6, 0), at("subah 6 baje ka alarm lagao"))
+        assertEquals(Pair(6, 0), at("सुबह 6 बजे का अलार्म लगाओ"))
+        assertEquals(Pair(19, 30), at("alarm for 7:30 pm"))
+        assertEquals(Pair(19, 30), at("sadhe saat baje ka alarm", nowH = 15))
+        assertEquals(Pair(7, 30), at("sadhe saat baje ka alarm", nowH = 1))
+        assertEquals(Pair(8, 15), at("subah sava aath ka alarm"))
+        assertEquals(Pair(20, 45), at("raat paune nau baje alarm laga do"))
+        assertEquals(Pair(18, 20), at("shaam 6 baj kar 20 minute ka alarm"))
+        assertEquals(Pair(18, 0), at("alarm 6 baje", nowH = 15))
+        assertEquals(Pair(5, 30), at("wake me up at 5:30"))
+        assertEquals(Pair(7, 0), at("set alarm for seven am"))
+        assertEquals(Pair(6, 45), at("alarm for 6 45 am"))
+        assertEquals(Pair(15, 10), at("10 minute baad alarm lagao", 15, 0))
+        assertEquals(Pair(16, 30), at("set an alarm in an hour and a half".replace("an hour and a half", "90 minutes"), 15, 0))
+        assertEquals(Pair(15, 30), at("aadhe ghante baad jaga dena", 15, 0))
+        assertEquals(Pair(15, 20), at("20 minute ka alarm", 15, 0))
+    }
+
+    @Test fun alarmRepeatAndReminders() {
+        assertEquals("daily", (p("har roz subah 6 baje alarm") as Cmd.Alarm).repeat)
+        assertEquals("weekdays", (p("set alarm for 7 am on weekdays") as Cmd.Alarm).repeat)
+        val r1 = p("remind me to call mom at 5 pm") as Cmd.Alarm
+        assertEquals("call mom", r1.label)
+        assertEquals(Pair(17, 0), TimeParse.resolve(r1.at, 10, 0))
+        assertEquals("call mom", (p("remind me at 5 pm to call mom") as Cmd.Alarm).label)
+        assertEquals("take medicine", (p("remind me in 10 minutes to take medicine") as Cmd.Alarm).label)
+        assertEquals("mummy ko call karna", (p("5 baje yaad dilana ki mummy ko call karna") as Cmd.Alarm).label)
+        assertEquals("mummy ko call karne", (p("mummy ko call karne ke liye 5 baje yaad dilana") as Cmd.Alarm).label)
+        assertTrue(p("remind me to buy milk") is Cmd.AlarmAsk)
+        assertTrue(p("alarm laga do") is Cmd.AlarmAsk)
+    }
+
+    @Test fun timersAndControls() {
+        assertEquals(Cmd.Timer(600), p("set a timer for 10 minutes"))
+        assertEquals(Cmd.Timer(300), p("5 minute ka timer lagao"))
+        assertEquals(Cmd.Timer(5400), p("timer for 1 hour 30 minutes"))
+        assertEquals(Cmd.Timer(30), p("30 second ka timer"))
+        assertEquals(Cmd.Timer(1800), p("aadha ghanta timer"))
+        assertEquals(Cmd.StopAlarm, p("alarm band karo"))
+        assertEquals(Cmd.StopAlarm, p("stop the alarm"))
+        assertEquals(Cmd.ShowAlarms, p("show my alarms"))
+        assertEquals(Cmd.ShowAlarms, p("mere alarm dikhao"))
+        // Purani cheezein na tootein
+        assertEquals(Cmd.Torch(false), p("torch band karo"))
+        assertEquals(Cmd.Media("pause"), p("gaana band karo"))
+        assertEquals(Cmd.Remember("mera gym 6 baje hai"), p("yaad rakhna ki mera gym 6 baje hai"))
+    }
+}
+
+class MusicWakeTest {
+    private fun j(vararg w: Pair<String, Double>) =
+        "{\"result\":[" + w.joinToString(",") { "{\"conf\":${it.second},\"word\":\"${it.first}\"}" } + "]}"
+
+    @Test fun hearsLillyOverMusic() {
+        // Gaane ke shabd [unk] ban kar aas-paas
+        val withMusic = j("[unk]" to 1.0, "[unk]" to 1.0, "hey" to 0.7, "lily" to 0.7, "[unk]" to 1.0)
+        assertTrue(!WakeCheck.accept(withMusic, "normal", noisy = false))
+        assertTrue(WakeCheck.accept(withMusic, "normal", noisy = true))
+        // Gaane me bas "lily" jaisa kuch aaya, bharosa kam
+        assertTrue(!WakeCheck.accept(j("[unk]" to 1.0, "lily" to 0.6, "[unk]" to 1.0), "normal", noisy = true))
+        // Asli shabd bahut zyada = baat-cheet
+        assertTrue(!WakeCheck.accept(j("hello" to 0.9, "hi" to 0.8, "hey" to 0.9, "lily" to 0.9), "normal", noisy = true))
+    }
+}
