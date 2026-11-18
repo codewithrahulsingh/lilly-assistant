@@ -27,10 +27,53 @@ object CallChoice {
 
     fun lastDigits(n: String) = n.filter { it.isDigit() }.takeLast(4)
 
+    /** Bolne ke liye naam: emoji / chinh hatao ("Abhishek 🔫🔫" -> "Abhishek") */
+    fun speakName(n: String): String =
+        n.replace(Regex("[^\\p{L}\\p{N} .'-]"), " ").replace(Regex("\\s+"), " ").trim().ifBlank { n }
+
+    /**
+     * Bole gaye naam se kaun-kaun se contact ho sakte hain.
+     * 1 naam = seedha call. Zyada = poochho.
+     *
+     * - "Abhishek" (ek shabd): jitne contacts me "Abhishek" shabd hai, sab — chahe kisi ka naam
+     *   bilkul "Abhishek" hi ho (jaise "Abhishek 🔫🔫"), kyunki aapka matlab koi bhi ho sakta hai.
+     * - "Abhishek Bhaiya" (poora naam) bilkul mile toh wahi.
+     * bonus = jise aap zyada call karte ho wo list me upar.
+     */
+    fun candidates(targets: List<String>, names: List<String>, bonus: (String) -> Int = { 0 }): List<String> {
+        val scores = LinkedHashMap<String, Int>()
+        for ((qi, q) in targets.withIndex()) {
+            for (name in names.distinct()) {
+                val base = Parser.contactScore(q, name)
+                if (base <= 0) continue
+                val sc = base - qi
+                if (sc > (scores[name] ?: 0)) scores[name] = sc
+            }
+        }
+        val best = scores.values.maxOrNull() ?: 0
+        if (best < 30) return emptyList()
+        val multiWord = Parser.normName(targets.first()).split(" ").size >= 2
+        val pool = if (best >= 99 && multiWord) {
+            // Poora naam bilkul mila
+            scores.filter { it.value >= 99 }.keys
+        } else {
+            // Jis-jis naam me bola gaya shabd hai (75+), warna sirf barabar wale
+            scores.filter { it.value >= minOf(best, 75) }.keys
+        }
+        return pool.sortedWith(
+            compareByDescending<String> { bonus(it) }.thenByDescending { scores[it] ?: 0 }.thenBy { it.lowercase(Locale.ROOT) }
+        ).take(25)
+    }
+
     /** Screen par: "1. Mobile …3210" */
     fun numberLine(i: Int, p: Phone) = "${i + 1}. ${p.label.ifBlank { "Number" }} …${lastDigits(p.number)}"
 
     private val ordinals: List<Pair<Int, Set<String>>> = listOf(
+        5 to setOf("sixth", "6th", "six", "chhatha", "chhata", "chhe"),
+        6 to setOf("seventh", "7th", "seven", "saatva", "satva", "saat"),
+        7 to setOf("eighth", "8th", "eight", "aathva", "athva", "aath"),
+        8 to setOf("ninth", "9th", "nine", "nauva", "nau"),
+        9 to setOf("tenth", "10th", "ten", "dasva", "das"),
         0 to setOf("first", "1st", "one", "1", "pehla", "pehle", "pehli", "pahla", "pahle", "upar", "upar wala", "ek"),
         1 to setOf("second", "2nd", "two", "2", "doosra", "dusra", "doosri", "dusri", "doosre", "dusre", "do"),
         2 to setOf("third", "3rd", "three", "3", "teesra", "tisra", "teesri", "tisri", "teen"),
@@ -38,7 +81,42 @@ object CallChoice {
         4 to setOf("fifth", "5th", "five", "5", "paanchva", "panchva", "paanch", "panch")
     )
     // "do" (karo/give) aur "ek" bahut aam shabd hain — sirf chhote jawab me ginti maano
-    private val ambiguousOrdinals = setOf("do", "ek", "teen", "char", "chaar", "paanch", "panch", "one")
+    private val ambiguousOrdinals = setOf(
+        "do", "ek", "teen", "char", "chaar", "paanch", "panch", "one", "chhe", "saat", "aath", "nau", "das"
+    )
+    private val fillerWords = setOf(
+        "wala", "wale", "wali", "vala", "vale", "vali", "ko", "call", "karo", "kar", "do", "pe", "par", "the", "one",
+        "number", "contact", "se", "baat", "please", "jo", "hai", "wo", "woh", "vo", "mera", "mere", "meri", "my", "to"
+    )
+
+    /** Naam se chunna: "bhaiya" -> "Abhishek Bhaiya" (na ki "Bhaiya Hf" / "Dr. … Bhaiya") */
+    private fun pickByName(answerWords: List<String>, options: List<Phone>): Int? {
+        val said = answerWords.filter { it !in fillerWords }
+        if (said.isEmpty()) return null
+        val nameWords = options.map { Parser.normName(it.name).split(" ").filter { w -> w.isNotBlank() } }
+        // Jo shabd sab naamon me hai ("abhishek") wo farak nahi batata
+        val shared = nameWords.reduce { a, b -> a.filter { it in b } }.toSet()
+        var bestScore = 0
+        var bestUnmatched = Int.MAX_VALUE
+        val best = ArrayList<Int>()
+        for ((i, words) in nameWords.withIndex()) {
+            val own = words.filter { it !in shared }
+            var score = 0
+            var matched = 0
+            for (w in own) {
+                when {
+                    said.contains(w) -> { score += 2; matched++ }
+                    w.length >= 4 && said.any { it.length >= 4 && Parser.levenshtein(it, w) <= 1 } -> { score += 1; matched++ }
+                }
+            }
+            if (score == 0) continue
+            val unmatched = own.size - matched
+            if (score > bestScore || (score == bestScore && unmatched < bestUnmatched)) {
+                bestScore = score; bestUnmatched = unmatched; best.clear(); best.add(i)
+            } else if (score == bestScore && unmatched == bestUnmatched) best.add(i)
+        }
+        return if (best.size == 1) best[0] else null
+    }
     private val lastWords = setOf("last", "aakhri", "akhri", "neeche", "niche", "neeche wala", "last wala")
     private val labelWords = mapOf(
         "mobile" to listOf("mobile", "cell", "phone"), "mob" to listOf("mobile"),
@@ -61,8 +139,16 @@ object CallChoice {
         val words = t.split(" ")
         val short = words.size <= 3
 
+        if (byName) {
+            // "number 5" / "5" = list ka 5th naam
+            Regex("""\b(\d{1,2})\b""").find(t)?.groupValues?.get(1)?.toIntOrNull()?.let { n ->
+                if (n in 1..options.size) return n - 1
+            }
+            pickByName(words, options)?.let { return it }
+        }
+
         // 1. Ank: "jo 3210 pe khatam hota hai" / "ending 45"
-        val nums = Regex("""\d{2,}""").findAll(t).map { it.value }.toList()
+        val nums = if (byName) emptyList() else Regex("""\d{2,}""").findAll(t).map { it.value }.toList()
         for (n in nums) {
             val hits = options.indices.filter { options[it].number.filter { c -> c.isDigit() }.endsWith(n) }
             if (hits.size == 1) return hits[0]

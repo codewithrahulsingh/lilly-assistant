@@ -438,3 +438,45 @@ class MemoryTest {
         assertEquals(null, mem().cachedAnswer("what is the capital of japan", true))
     }
 }
+
+class ManyContactsTest {
+    private val names = listOf(
+        "Abhishek 🔫🔫", "Abhishek Badiyasar", "Abhishek Badiysar", "Abhishek Balesra", "Abhishek Bhaiya",
+        "Abhishek Bhaiya Hf", "Abhishek Bpt Vgu", "Abhishek Friend", "Abhishek Ji", "Abhishek Jitu",
+        "Abhishek Moraya", "Abhishek New", "Abhishek Sain", "Abhishek Shrimal Plot", "Abhishek Vgu",
+        "Dr. Abhishek Bhaiya", "Rahul Singh", "Mummy"
+    )
+    private val opts = CallChoice.candidates(listOf("abhishek"), names).map { CallChoice.Phone(it, "9876543210", "") }
+    private fun pick(a: String) = CallChoice.pick(a, opts, true)?.let { opts[it].name }
+
+    @Test fun asksWhenManyShareTheName() {
+        // "Abhishek 🔫🔫" ka naam bilkul "Abhishek" hai, phir bhi baaki 15 ke saath poochhna chahiye
+        assertEquals(16, CallChoice.candidates(listOf("abhishek"), names).size)
+        assertEquals(16, CallChoice.candidates(listOf("अभिषेक"), names).size)
+        // Poora naam bola toh seedha
+        assertEquals(listOf("Abhishek Bhaiya"), CallChoice.candidates(listOf("abhishek bhaiya"), names))
+        assertEquals(listOf("Abhishek Jitu"), CallChoice.candidates(listOf("abhishek jitu"), names))
+        assertEquals(listOf("Rahul Singh"), CallChoice.candidates(listOf("rahul"), names))
+        // Zyada call kiya hua upar
+        assertEquals("Abhishek Vgu", CallChoice.candidates(listOf("abhishek"), names) { if (it == "Abhishek Vgu") 9 else 0 }.first())
+        assertEquals("Abhishek", CallChoice.speakName("Abhishek 🔫🔫"))
+    }
+
+    @Test fun picksBySecondName() {
+        assertEquals("Abhishek Bhaiya", pick("bhaiya"))
+        assertEquals("Abhishek Bhaiya Hf", pick("bhaiya hf wale"))
+        assertEquals("Dr. Abhishek Bhaiya", pick("dr bhaiya"))
+        assertEquals("Abhishek Friend", pick("friend"))
+        assertEquals("Abhishek Friend", pick("friend wale abhishek ko"))
+        assertEquals("Abhishek Ji", pick("ji"))
+        assertEquals("Abhishek Jitu", pick("jitu"))
+        assertEquals("Abhishek Vgu", pick("vgu"))
+        assertEquals("Abhishek Bpt Vgu", pick("bpt vgu"))
+        assertEquals("Abhishek Badiyasar", pick("badiyasar"))
+        assertEquals("Abhishek Shrimal Plot", pick("plot wale"))
+        assertEquals("Abhishek Moraya", pick("morya"))
+        assertEquals(opts[4].name, pick("number 5"))
+        assertEquals(opts[2].name, pick("teesra"))
+        assertEquals(null, pick("pata nahi yaar"))
+    }
+}

@@ -264,21 +264,9 @@ class LillyBrain(private val ctx: Context) {
         val learned = targets.firstNotNullOfOrNull { learner.contactFor(it) }
         if (learned != null && rows.any { it.name == learned }) return callByName(target, learned, rows, speaker, favOnly)
 
-        // Har naam ka sabse achha score
-        val scores = LinkedHashMap<String, Int>()
-        for ((qi, q) in targets.withIndex()) {
-            for (name in rows.map { it.name }.distinct()) {
-                val base = Parser.contactScore(q, name)
-                if (base <= 0) continue
-                val sc = base - qi
-                if (sc > (scores[name] ?: 0)) scores[name] = sc
-            }
-        }
-        val best = scores.values.maxOrNull() ?: 0
-        if (best < 30) return notFound
-        // Barabar ke match: "Rohit" -> Rohit Sharma, Rohit Gupta  => poochho
-        val tied = scores.filter { it.value == best }.keys
-            .sortedByDescending { learner.contactBonus(it) }.take(4)
+        // Kaun-kaun se contact ho sakte hain ("Abhishek" -> 16 Abhishek)
+        val tied = CallChoice.candidates(targets, rows.map { it.name }) { learner.contactBonus(it) }
+        if (tied.isEmpty()) return notFound
         if (tied.size == 1) return callByName(target, tied[0], rows, speaker, favOnly)
 
         val options = tied.map { n -> rows.first { it.name == n } }
@@ -306,10 +294,24 @@ class LillyBrain(private val ctx: Context) {
     private fun askChoice(pc: PendingCall): Reply {
         val o = pc.options
         if (pc.byName) {
-            val lines = o.mapIndexed { i, p -> "${i + 1}. ${p.name}" }.joinToString("\n")
+            val shown = o.take(10)
+            val lines = shown.mapIndexed { i, p -> "${i + 1}. ${p.name}" }.joinToString("\n")
+            val more = if (o.size > shown.size) "\n…and ${o.size - shown.size} more" else ""
+            val who = pc.target.replaceFirstChar { it.uppercase() }
+            val names = o.map { CallChoice.speakName(it.name) }
+            if (o.size <= 3) {
+                return Reply(
+                    "I found ${o.size} contacts for “$who”:\n$lines\nWhich one?",
+                    "${o.size} कॉन्टैक्ट मिले: " + names.joinToString(", या ") + "। किसको कॉल करूँ?",
+                    endChat = false
+                )
+            }
+            // Bahut saare: sab bolna lamba hoga — screen par list, bolo sirf kuch naam
+            val ex = names.take(3)
             return Reply(
-                "I found ${o.size} contacts for “${pc.target}”:\n$lines\nWhich one?",
-                "${o.size} कॉन्टैक्ट मिले: " + o.joinToString(", या ") { it.name } + "। किसको कॉल करूँ?",
+                "I found ${o.size} contacts named “$who”. Which one?\n$lines$more\n" +
+                    "Say the second name (like “${ex[1].substringAfter(' ', ex[1])}”) or a number.",
+                "$who नाम के ${o.size} कॉन्टैक्ट हैं। कौन सा? जैसे ${ex[0]}, ${ex[1]}, या ${ex[2]}। दूसरा नाम बोलिए।",
                 endChat = false
             )
         }
@@ -327,7 +329,7 @@ class LillyBrain(private val ctx: Context) {
         }
         return Reply(
             "$name has ${o.size} numbers:\n$lines\nWhich one?",
-            "$name के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर कॉल करूँ?",
+            "${CallChoice.speakName(name)} के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर कॉल करूँ?",
             endChat = false
         )
     }
@@ -367,7 +369,7 @@ class LillyBrain(private val ctx: Context) {
         val onSpk = if (speaker) " on speaker" else ""
         val onSpkHi = if (speaker) " स्पीकर पर" else ""
         val lab = if (chosen && p.label.isNotBlank()) " (${p.label})" else ""
-        return Reply("Calling ${p.name}$lab$onSpk", "${p.name} को$onSpkHi कॉल कर रही हूँ", {
+        return Reply("Calling ${p.name}$lab$onSpk", "${CallChoice.speakName(p.name)} को$onSpkHi कॉल कर रही हूँ", {
             learner.rememberContact(target, p.name)
             learner.rememberNumber(p.name, CallChoice.digitsKey(p.number), p.label.ifBlank { "Number" })
             startCall(p.number, speaker)
