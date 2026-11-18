@@ -10,10 +10,10 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 23
-        versionName = "4.7"
+        versionCode = 24
+        versionName = "4.7.1"
         // Sirf phone wale processor: APK chhoti aur install tez
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
     // Har build ek hi key se sign ho, taaki nayi APK purani ke upar install ho sake
     signingConfigs {
