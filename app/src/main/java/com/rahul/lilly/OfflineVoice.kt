@@ -6,8 +6,10 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import java.io.File
@@ -17,76 +19,128 @@ import java.net.URL
 import java.util.zip.ZipInputStream
 
 /**
- * Phone ke andar chalne wali insaani ladki ki awaaz (Piper "Priyamvada", Hindi) — sherpa-onnx se.
- * Ek baar ~60 MB ka voice pack download, phir hamesha wahi awaaz: bina internet, bina limit, turant.
+ * Phone ke andar chalne wali insaani ladki ki awaaz (sherpa-onnx). Ek baar download, phir hamesha wahi awaaz:
+ * bina internet, bina limit. Jo awaaz aap chuno wahi pakki — Lilly khud kabhi nahi badalti.
+ *
+ * Packs:
+ *  - "kokoro": ek model, kai natural awaazein (Indian ladki: Ananya, Diya; English: Heart, Emma)
+ *  - "piper":  Priyamvada (chhota download)
  */
 object OfflineVoice {
-    const val PACK_URL = "https://github.com/codewithrahulsingh/lilly-assistant/releases/latest/download/voice-hi-female.zip"
-    const val PACK_MB = 60
+
+    data class VoiceChoice(val id: String, val name: String, val about: String, val pack: String, val sid: Int)
+
+    val CHOICES = listOf(
+        VoiceChoice("kokoro:31", "Ananya", "Indian woman, warm — Hindi + English", "kokoro", 31),
+        VoiceChoice("kokoro:32", "Diya", "Indian woman, soft — Hindi + English", "kokoro", 32),
+        VoiceChoice("kokoro:3", "Heart", "Clear and friendly, English-style accent", "kokoro", 3),
+        VoiceChoice("kokoro:21", "Emma", "Calm, British-style accent", "kokoro", 21),
+        VoiceChoice("piper", "Priyamvada", "Hindi, smaller download", "piper", 0)
+    )
+
+    private const val BASE = "https://github.com/codewithrahulsingh/lilly-assistant/releases/download/voices/"
+    fun packUrl(pack: String) = BASE + if (pack == "kokoro") "voice-kokoro.zip" else "voice-hi-female.zip"
+    fun packMb(pack: String) = if (pack == "kokoro") 125 else 60
 
     private val main = Handler(Looper.getMainLooper())
-    @Volatile private var tts: OfflineTts? = null
-    /** Pichhli baar offline awaaz kyun nahi chali — app me dikhane ke liye */
-    @Volatile var lastError: String? = null
+    @Volatile private var engine: OfflineTts? = null
+    @Volatile private var enginePack: String? = null
     @Volatile private var token = 0
     @Volatile private var track: AudioTrack? = null
     private val lock = Any()
 
-    fun dir(ctx: Context) = File(ctx.filesDir, "voicepack")
+    /** Pichhli baar offline awaaz kyun nahi chali — app me dikhane ke liye */
+    @Volatile var lastError: String? = null
 
-    private fun model(ctx: Context): File? = dir(ctx).listFiles { f -> f.name.endsWith(".onnx") }?.firstOrNull()
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
 
-    fun installed(ctx: Context): Boolean =
-        model(ctx) != null && File(dir(ctx), "tokens.txt").exists() && File(dir(ctx), "espeak-ng-data").isDirectory
+    fun dir(ctx: Context, pack: String) = File(ctx.filesDir, if (pack == "kokoro") "voicepack-kokoro" else "voicepack")
 
-    /** Engine ek baar banao (2-3 sec), phir wahi */
-    private fun engine(ctx: Context): OfflineTts? {
-        tts?.let { return it }
+    fun packInstalled(ctx: Context, pack: String): Boolean {
+        val d = dir(ctx, pack)
+        if (!File(d, "tokens.txt").exists() || !File(d, "espeak-ng-data").isDirectory) return false
+        if (d.listFiles { f -> f.name.endsWith(".onnx") }.isNullOrEmpty()) return false
+        return pack != "kokoro" || File(d, "voices.bin").exists()
+    }
+
+    /** Chuni hui awaaz (pakki). Pehle se kuch na chuna ho toh jo pack download hai uski pehli awaaz */
+    fun chosen(ctx: Context): VoiceChoice? {
+        val id = prefs(ctx).getString("offline_voice", null)
+        CHOICES.firstOrNull { it.id == id && packInstalled(ctx, it.pack) }?.let { return it }
+        return CHOICES.firstOrNull { packInstalled(ctx, it.pack) }
+    }
+
+    fun installed(ctx: Context): Boolean = chosen(ctx) != null
+
+    fun choose(ctx: Context, id: String) {
+        prefs(ctx).edit().putString("offline_voice", id).apply()
+    }
+
+    private fun build(ctx: Context, pack: String): OfflineTts? {
+        val d = dir(ctx, pack)
+        val onnx = d.listFiles { f -> f.name.endsWith(".onnx") }?.firstOrNull() ?: return null
+        val espeak = File(d, "espeak-ng-data").absolutePath
+        val tokens = File(d, "tokens.txt").absolutePath
+        val model = if (pack == "kokoro") OfflineTtsModelConfig(
+            kokoro = OfflineTtsKokoroModelConfig(
+                model = onnx.absolutePath, voices = File(d, "voices.bin").absolutePath,
+                tokens = tokens, dataDir = espeak, lang = "hi"
+            ),
+            numThreads = 4
+        ) else OfflineTtsModelConfig(
+            vits = OfflineTtsVitsModelConfig(model = onnx.absolutePath, tokens = tokens, dataDir = espeak),
+            numThreads = 2
+        )
+        return try { OfflineTts(assetManager = null, config = OfflineTtsConfig(model = model)) } catch (e: Throwable) {
+            lastError = "Voice engine didn't start: ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
+            null
+        }
+    }
+
+    /** Engine ek baar banao (kuch second), phir wahi */
+    private fun engineFor(ctx: Context, pack: String): OfflineTts? {
+        if (enginePack == pack) engine?.let { return it }
         synchronized(lock) {
-            tts?.let { return it }
-            val m = model(ctx) ?: return null
-            val d = dir(ctx)
-            val cfg = OfflineTtsConfig(
-                model = OfflineTtsModelConfig(
-                    vits = OfflineTtsVitsModelConfig(
-                        model = m.absolutePath,
-                        tokens = File(d, "tokens.txt").absolutePath,
-                        dataDir = File(d, "espeak-ng-data").absolutePath
-                    ),
-                    numThreads = 2
-                )
-            )
-            val t = try { OfflineTts(assetManager = null, config = cfg) } catch (e: Throwable) {
-                lastError = "Voice engine didn't start: ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
-                null
-            }
-            tts = t
+            if (enginePack == pack) engine?.let { return it }
+            try { engine?.release() } catch (e: Throwable) { }
+            engine = null
+            enginePack = null
+            val t = build(ctx, pack) ?: return null
+            engine = t
+            enginePack = pack
             return t
         }
     }
 
     /** App khulte hi engine tayyar kar lo, taaki pehli line me der na ho */
     fun warmUp(ctx: Context) {
-        if (!installed(ctx) || tts != null) return
+        val c = chosen(ctx) ?: return
+        if (enginePack == c.pack && engine != null) return
         val app = ctx.applicationContext
-        Thread { engine(app) }.start()
+        Thread { engineFor(app, c.pack) }.start()
     }
 
-    /** Bolo. onDone = khatam; onFail = awaaz nahi bani (tab phone ki awaaz) */
-    fun speak(ctx: Context, text: String, speed: Float, onDone: () -> Unit, onFail: () -> Unit) {
+    private fun hasDevanagari(s: String) = s.any { it in 'ऀ'..'ॿ' }
+
+    /** Bolo (chuni hui awaaz me, ya `voiceId` ho toh us awaaz me — sunke dekhne ke liye) */
+    fun speak(
+        ctx: Context, text: String, speed: Float, onDone: () -> Unit, onFail: () -> Unit, voiceId: String? = null
+    ) {
         stop()
         val my = ++token
         val app = ctx.applicationContext
+        val v = (voiceId?.let { id -> CHOICES.firstOrNull { it.id == id && packInstalled(app, it.pack) } }) ?: chosen(app)
         val clean = text.replace(Regex("[*_#`~|<>\\[\\]{}]"), " ").replace(Regex("\\s+"), " ").trim()
+        if (v == null) { lastError = "No offline voice downloaded"; main.post { onFail() }; return }
         if (clean.isBlank()) { main.post { onDone() }; return }
         Thread {
             var ok = false
             var t: AudioTrack? = null
             try {
-                val e = engine(app) ?: throw IllegalStateException("no voice pack")
+                val e = engineFor(app, v.pack) ?: throw IllegalStateException(lastError ?: "voice engine missing")
                 val sr = e.sampleRate()
                 val min = AudioTrack.getMinBufferSize(sr, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-                t = AudioTrack.Builder()
+                val at = AudioTrack.Builder()
                     .setAudioAttributes(
                         AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_ASSISTANT)
@@ -100,25 +154,34 @@ object OfflineVoice {
                     .setBufferSizeInBytes(maxOf(min, sr * 4 / 2))
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
-                track = t
-                t.play()
+                t = at
+                track = at
+                at.play()
                 var total = 0
-                // Vakya-vakya ban kar turant bajta hai (poora banne ka intezaar nahi)
-                e.generateWithCallback(clean, 0, speed) { samples ->
+                val write: (FloatArray) -> Int = { samples ->
                     if (my != token) 0 else {
-                        t.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+                        at.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
                         total += samples.size
                         1
                     }
                 }
-                // Bacha hua bajne do
+                // Vakya-vakya ban kar turant bajta hai (poora banne ka intezaar nahi)
+                if (v.pack == "kokoro") {
+                    // Hindi lipi = Hindi uchcharan, warna English — awaaz wahi rehti hai
+                    val lang = if (hasDevanagari(clean)) "hi" else "en-us"
+                    e.generateWithConfigAndCallback(
+                        clean, GenerationConfig(sid = v.sid, speed = speed, extra = mapOf("lang" to lang)), write
+                    )
+                } else {
+                    e.generateWithCallback(clean, 0, speed, write)
+                }
                 val until = System.currentTimeMillis() + total * 1000L / sr + 1500
-                while (my == token && t.playbackHeadPosition < total && System.currentTimeMillis() < until) Thread.sleep(40)
+                while (my == token && at.playbackHeadPosition < total && System.currentTimeMillis() < until) Thread.sleep(40)
                 ok = total > 0
                 if (ok) lastError = null else if (my == token) lastError = "The voice made no sound for this text"
             } catch (e: Throwable) {
                 ok = false
-                if (lastError == null || e.message != "no voice pack") lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}"
+                lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}"
             } finally {
                 try { t?.stop() } catch (e: Exception) { }
                 try { t?.release() } catch (e: Exception) { }
@@ -138,32 +201,33 @@ object OfflineVoice {
         try { t?.pause(); t?.flush() } catch (e: Exception) { }
     }
 
-    fun delete(ctx: Context) {
+    fun delete(ctx: Context, pack: String) {
         stop()
         synchronized(lock) {
-            try { tts?.release() } catch (e: Throwable) { }
-            tts = null
+            if (enginePack == pack) {
+                try { engine?.release() } catch (e: Throwable) { }
+                engine = null
+                enginePack = null
+            }
         }
-        dir(ctx).deleteRecursively()
+        dir(ctx, pack).deleteRecursively()
     }
 
-    /**
-     * Voice pack download + unzip. progress(0..100) main thread par. done(true/false, galti).
-     */
-    fun download(ctx: Context, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) {
+    /** Voice pack download + unzip. progress(0..100) main thread par. done(true/false, galti) */
+    fun download(ctx: Context, pack: String, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) {
         val app = ctx.applicationContext
         Thread {
-            val tmp = File(app.filesDir, "voicepack-new")
+            val tmp = File(app.filesDir, "voicepack-new-$pack")
             var err = ""
             try {
                 tmp.deleteRecursively(); tmp.mkdirs()
-                val c = URL(PACK_URL).openConnection() as HttpURLConnection
+                val c = URL(packUrl(pack)).openConnection() as HttpURLConnection
                 c.connectTimeout = 15000
                 c.readTimeout = 30000
                 c.instanceFollowRedirects = true
                 c.setRequestProperty("User-Agent", "Lilly-app")
                 if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode}")
-                val size = c.contentLengthLong.takeIf { it > 0 } ?: (PACK_MB * 1024L * 1024L)
+                val size = c.contentLengthLong.takeIf { it > 0 } ?: (packMb(pack) * 1024L * 1024L)
                 var read = 0L
                 var lastPct = -1
                 val counting = object : java.io.FilterInputStream(c.inputStream) {
@@ -192,22 +256,27 @@ object OfflineVoice {
                     }
                 }
                 c.disconnect()
-                // Pack ke andar ek folder ho toh uski cheezein upar le aao
                 val inner = tmp.listFiles()?.singleOrNull { it.isDirectory && it.name != "espeak-ng-data" }
                 val src = if (inner != null && tmp.listFiles()?.none { it.name.endsWith(".onnx") } == true) inner else tmp
                 stop()
-                synchronized(lock) { try { tts?.release() } catch (e: Throwable) { }; tts = null }
-                val dst = dir(app)
+                synchronized(lock) {
+                    if (enginePack == pack) {
+                        try { engine?.release() } catch (e: Throwable) { }
+                        engine = null
+                        enginePack = null
+                    }
+                }
+                val dst = dir(app, pack)
                 dst.deleteRecursively()
                 if (!src.renameTo(dst)) throw IllegalStateException("couldn't save the voice")
                 tmp.deleteRecursively()
-                if (!installed(app)) throw IllegalStateException("voice files missing")
+                if (!packInstalled(app, pack)) throw IllegalStateException("voice files missing")
             } catch (e: Exception) {
                 err = e.message ?: e.javaClass.simpleName
                 tmp.deleteRecursively()
             }
             val ok = err.isEmpty()
-            if (ok) engine(app)
+            if (ok) engineFor(app, pack)
             main.post { done(ok, err) }
         }.start()
     }
