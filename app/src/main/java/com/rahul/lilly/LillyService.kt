@@ -1189,6 +1189,12 @@ class LillyService : Service() {
                         deliver(brain.handleFromAi(question, cmd))
                         return@act
                     }
+                    // Gaali mode ON aur AI "aise shabd mat bolo" wala lecture de rahi — uski jagah gaali wala jawab
+                    if (prefs.getBoolean("abuse_mode", false) && Abuse.isLecture(result.display + " " + result.spoken)) {
+                        val (d, sp) = Abuse.reply(true, english, question)
+                        say(d, if (english) d else sp) { continueChat() }
+                        return@act
+                    }
                     // Phone ka kaam bola tha aur AI "nahi kar sakti / API…" keh rahi hai — wo mat sunao
                     if (Smart.looksLikeAction(question) && Smart.isRefusal(result.display + " " + result.spoken)) {
                         sayBi("Sorry, I didn't get that. Try: \"Play Kesariya on Spotify\" or \"WhatsApp Rahul that I'm coming\"",

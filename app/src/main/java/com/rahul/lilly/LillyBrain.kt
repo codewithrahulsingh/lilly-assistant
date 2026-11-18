@@ -171,7 +171,7 @@ class LillyBrain(private val ctx: Context) {
                 return r.copy(display = d + "\n" + r.display, spoken = sp + " " + r.spoken, spokenEn = null)
             }
         }
-        val (d, sp) = Abuse.reply(on, en)
+        val (d, sp) = Abuse.reply(on, en, t)
         return Reply(d, sp, endChat = false)
     }
 

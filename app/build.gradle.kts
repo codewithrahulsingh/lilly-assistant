@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 35
-        versionName = "5.8"
+        versionCode = 36
+        versionName = "5.9"
         // Sirf phone wale processor: APK chhoti aur install tez
         ndk { abiFilters += listOf("arm64-v8a") }
     }

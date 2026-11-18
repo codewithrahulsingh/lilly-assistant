@@ -826,3 +826,13 @@ class AbuseSpellingTest {
             org.junit.Assert.assertFalse(t, Abuse.has(t))
     }
 }
+
+class AbuseDevanagariTest {
+    @org.junit.Test fun hindiScript() {
+        for (t in listOf("मादरचोद", "भेनचोद", "बीसी", "तेरी माँ की", "f*** you", "साले"))
+            org.junit.Assert.assertTrue(t, Abuse.has(Parser.normalize(t)))
+        org.junit.Assert.assertTrue(Abuse.reply(true, false, "bahanchod").second.isNotBlank())
+        org.junit.Assert.assertTrue(Abuse.isLecture("Rahul, kripya aise shabdon ka istemal mat kijiye"))
+        org.junit.Assert.assertFalse(Abuse.isLecture("Delhi ka mausam aaj saaf rahega"))
+    }
+}
