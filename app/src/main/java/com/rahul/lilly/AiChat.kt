@@ -64,6 +64,8 @@ object AiChat {
                 Pair("No internet connection", "इंटरनेट नहीं चल रहा")
             e is java.net.SocketTimeoutException ->
                 Pair("The AI took too long to answer, please try again", "ए आई ने जवाब देने में बहुत देर कर दी, दोबारा बोलिए")
+            err?.code == 0 -> Pair("No AI key is set. Add one in AI chat in the Lilly app", "ए आई की नहीं डाली है, लिली ऐप में डालिए")
+            err?.code == 402 -> Pair("The second AI's balance or free limit is used up (402)", "दूसरी ए आई की लिमिट खत्म हो गई है")
             err == null -> Pair("I couldn't get an answer from the AI (${e?.javaClass?.simpleName})", "ए आई से जवाब नहीं मिला")
             err.code == 429 ->
                 Pair("The free AI limit is used up for now, please try again in a little while", "ए आई की फ्री लिमिट अभी खत्म है, थोड़ी देर बाद बोलिए")
@@ -75,8 +77,49 @@ object AiChat {
         }
     }
 
+    /** Doosri AI service jo OpenAI jaisa format samjhe (jaise freemodel.in) */
+    data class Custom(val url: String, val key: String, val model: String = "", val shareMemory: Boolean = false)
+
+    const val CUSTOM_DEFAULT_URL = "https://freemodel.in/v1"
+
+    fun customFrom(p: android.content.SharedPreferences): Custom? {
+        val key = (p.getString("ai2_key", "") ?: "").filter { !it.isWhitespace() }
+        if (key.isBlank()) return null
+        return Custom(
+            (p.getString("ai2_url", CUSTOM_DEFAULT_URL) ?: CUSTOM_DEFAULT_URL).trim().ifBlank { CUSTOM_DEFAULT_URL },
+            key, (p.getString("ai2_model", "") ?: "").trim(), p.getBoolean("ai2_memory", false)
+        )
+    }
+
+    /**
+     * Pehli AI (Gemini/Claude) aur doosri (custom) — jo pehle set ho (ai_order) wo pehle;
+     * wo na chale (limit, galat key, internet, server) toh doosri.
+     */
+    fun askWithFallback(
+        p: android.content.SharedPreferences, history: List<Turn>, question: String, facts: String, english: Boolean?
+    ): Answer {
+        val main = (p.getString("ai_key", "") ?: "").filter { !it.isWhitespace() }
+        val custom = customFrom(p)
+        val tries = ArrayList<() -> Answer>()
+        if (main.isNotBlank()) tries.add { ask(main, history, question, facts, english) }
+        if (custom != null) tries.add {
+            // Aapki yaaddasht doosri service ko tabhi jaati hai jab aap allow karo
+            ask("", history, question, if (custom.shareMemory) facts else "", english, custom)
+        }
+        if (p.getString("ai_order", "main") == "custom") tries.reverse()
+        if (tries.isEmpty()) throw AiError(0, "no key")
+        var last: Exception? = null
+        for (t in tries) {
+            try { return t() } catch (e: Exception) { last = e }
+        }
+        throw last ?: AiError(0, "no key")
+    }
+
     /** english: user ne abhi English me bola (true) / Hindi-Hinglish me (false) / pata nahi (null) */
-    fun ask(keyRaw: String, history: List<Turn>, question: String, facts: String = "", english: Boolean? = null): Answer {
+    fun ask(
+        keyRaw: String, history: List<Turn>, question: String, facts: String = "", english: Boolean? = null,
+        custom: Custom? = null
+    ): Answer {
         // Copy-paste me aayi space / nayi line hata do (warna request hi nahi jaati)
         val key = keyRaw.filter { !it.isWhitespace() }
         val lang = when (english) {
@@ -85,7 +128,11 @@ object AiChat {
             null -> ""
         }
         val system = systemFor(facts) + lang
-        var raw = if (key.startsWith("sk-ant-")) anthropic(key, history, question, system) else gemini(key, history, question, system)
+        var raw = when {
+            custom != null -> openAi(custom, history, question, system)
+            key.startsWith("sk-ant-") -> anthropic(key, history, question, system)
+            else -> gemini(key, history, question, system)
+        }
         // "|||MEM: Rahul's gym is at 6 pm" — yaad rakhne wali baat alag nikaalo
         var memory: String? = null
         Regex("""(?:\|\|\|)?\s*MEM\s*:\s*(.+)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).find(raw)?.let { m ->
@@ -128,6 +175,44 @@ object AiChat {
         } finally {
             c.disconnect()
         }
+    }
+
+    /** Custom ne kaunsa model chuna (jab aapne naam na diya ho) */
+    @Volatile var customModelUsed: String = ""
+    @Volatile private var pickedFor: Pair<String, String>? = null
+
+    /** OpenAI jaisa format: POST {url}/chat/completions, "Authorization: Bearer key" */
+    private fun openAi(c: Custom, history: List<Turn>, question: String, system: String): String {
+        val base = c.url.trimEnd('/')
+        val headers = mapOf("Authorization" to "Bearer ${c.key}")
+        val model = c.model.ifBlank { pickModel(base, headers) }
+        customModelUsed = model
+        val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
+        for (t in history) messages.put(JSONObject().put("role", if (t.role == "assistant") "assistant" else "user").put("content", t.text))
+        messages.put(JSONObject().put("role", "user").put("content", question))
+        val body = JSONObject().put("model", model).put("messages", messages)
+            .put("max_tokens", 1000).put("temperature", 0.7)
+        val res = post("$base/chat/completions", headers, body.toString())
+        val content = JSONObject(res).getJSONArray("choices").getJSONObject(0)
+            .getJSONObject("message").optString("content")
+        // Kuch models apni "soch" <think>…</think> me likhte hain — wo bolna nahi
+        return content.replace(Regex("(?s)<think>.*?</think>"), "").trim()
+    }
+
+    /** Model naam na diya ho toh service ki list me se tez wala chuno */
+    private fun pickModel(base: String, headers: Map<String, String>): String {
+        pickedFor?.let { if (it.first == base) return it.second }
+        val res = post("$base/models", headers, null)
+        val ids = ArrayList<String>()
+        val arr = JSONObject(res).optJSONArray("data") ?: JSONArray()
+        for (i in 0 until arr.length()) arr.optJSONObject(i)?.optString("id")?.takeIf { it.isNotBlank() }?.let { ids.add(it) }
+        val skip = listOf("embed", "image", "tts", "whisper", "audio", "vision-only", "moderation", "rerank", "dall")
+        val usable = ids.filter { id -> skip.none { id.lowercase().contains(it) } }
+        val fast = listOf("flash", "mini", "turbo", "lite", "luna", "chat", "small")
+        val pick = usable.firstOrNull { id -> fast.any { id.lowercase().contains(it) } } ?: usable.firstOrNull()
+            ?: throw AiError(404, "no model in the list")
+        pickedFor = Pair(base, pick)
+        return pick
     }
 
     private fun anthropic(key: String, history: List<Turn>, question: String, system: String): String {

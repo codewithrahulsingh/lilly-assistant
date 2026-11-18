@@ -1038,7 +1038,7 @@ class LillyService : Service() {
         Thread {
             var failure: Throwable? = null
             val inEnglish = english
-            val result = try { AiChat.ask(key, history, question, facts, inEnglish) } catch (e: Exception) { failure = e; null }
+            val result = try { AiChat.askWithFallback(prefs, history, question, facts, inEnglish) } catch (e: Exception) { failure = e; null }
             handler.post {
                 if (mode == Mode.STOPPED || my != aiToken) return@post
                 handler.removeCallbacks(more)

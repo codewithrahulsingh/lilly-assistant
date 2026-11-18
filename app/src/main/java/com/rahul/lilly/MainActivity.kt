@@ -46,6 +46,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var notifValue: TextView
     private lateinit var scriptValue: TextView
     private lateinit var placesValue: TextView
+    private lateinit var ai2Value: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -219,6 +220,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         scriptValue = card(r11, "💬", "WhatsApp typing") { chooseScript() }
         placesValue = card(r11, "📍", "Home, office & city") { showPlaces() }
 
+        val r12 = row(col)
+        ai2Value = card(r12, "🔌", "Second AI (freemodel etc.)") { ai2Setup() }
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -254,6 +258,11 @@ class MainActivity : Activity(), LillyBus.Ui {
             else -> "ON ✓"
         }
         scriptValue.text = if (prefs.getString("msg_script", "spoken") == "roman") "Hinglish (Roman letters)" else "As you speak (हिंदी / English)"
+        ai2Value.text = when {
+            (prefs.getString("ai2_key", "") ?: "").isBlank() -> "Not set — tap to add"
+            prefs.getString("ai_order", "main") == "custom" -> "ON ✓ used first"
+            else -> "ON ✓ backup when Gemini fails"
+        }
         val places = listOf("home_address", "office_address", "city").count { !prefs.getString(it, null).isNullOrBlank() }
         placesValue.text = if (places == 0) "Not set — tap to see how" else "$places saved"
         updateValue.text = Updater.status(this)
@@ -629,6 +638,79 @@ class MainActivity : Activity(), LillyBus.Ui {
                     .setNegativeButton("Cancel", null).show()
             }
             .show()
+    }
+
+    /** Doosri AI: freemodel.in jaisi koi bhi OpenAI-compatible service */
+    private fun ai2Setup() {
+        fun field(hint: String, value: String, secret: Boolean = false) = android.widget.EditText(this).apply {
+            this.hint = hint
+            setSingleLine(true)
+            setText(value)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                (if (secret) android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD else android.text.InputType.TYPE_TEXT_VARIATION_URI)
+        }
+        val url = field("Base URL", prefs.getString("ai2_url", AiChat.CUSTOM_DEFAULT_URL) ?: AiChat.CUSTOM_DEFAULT_URL)
+        val key = field("API key", prefs.getString("ai2_key", "") ?: "", secret = true)
+        val model = field("Model (optional — leave empty to auto-pick)", prefs.getString("ai2_model", "") ?: "")
+        val first = android.widget.CheckBox(this).apply {
+            text = "Use this first (Gemini becomes the backup)"
+            isChecked = prefs.getString("ai_order", "main") == "custom"
+        }
+        val mem = android.widget.CheckBox(this).apply {
+            text = "Also send what Lilly remembers about me"
+            isChecked = prefs.getBoolean("ai2_memory", false)
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(4), dp(22), 0)
+            listOf(url, key, model, first, mem).forEach { addView(it) }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("🔌 Second AI")
+            .setMessage(
+                "Any service that works like OpenAI's API (for example freemodel.in). " +
+                    "By default it's a backup: Lilly uses Gemini first and switches to this one if Gemini fails.\n\n" +
+                    "Your questions go to this service. Things Lilly remembers about you are sent only if you tick the box."
+            )
+            .setView(box)
+            .setPositiveButton("Save & test") { _, _ ->
+                prefs.edit()
+                    .putString("ai2_url", url.text.toString().trim().ifBlank { AiChat.CUSTOM_DEFAULT_URL })
+                    .putString("ai2_key", key.text.toString().filter { !it.isWhitespace() })
+                    .putString("ai2_model", model.text.toString().trim())
+                    .putString("ai_order", if (first.isChecked) "custom" else "main")
+                    .putBoolean("ai2_memory", mem.isChecked)
+                    .apply()
+                refreshCards()
+                testAi2()
+            }
+            .setNeutralButton("Remove") { _, _ ->
+                prefs.edit().remove("ai2_key").remove("ai2_model").putString("ai_order", "main").apply()
+                refreshCards()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun testAi2() {
+        val c = AiChat.customFrom(prefs) ?: return
+        android.widget.Toast.makeText(this, "Testing the second AI…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            var failure: Throwable? = null
+            val answer = try { AiChat.ask("", emptyList(), "Say hello", custom = c) } catch (e: Exception) { failure = e; null }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                val b = AlertDialog.Builder(this)
+                if (answer != null) {
+                    b.setTitle("Second AI is working ✓")
+                        .setMessage("Model: ${AiChat.customModelUsed}\n\nLilly's reply:\n" + answer.display)
+                } else {
+                    val detail = (failure as? AiChat.AiError)?.let { "\n\nServer: HTTP ${it.code} ${it.detail}" } ?: ""
+                    b.setTitle("Second AI didn't work ✗").setMessage(AiChat.explain(failure).first + detail)
+                }
+                b.setPositiveButton("OK", null).show()
+            }
+        }.start()
     }
 
     private fun notifSetup() {

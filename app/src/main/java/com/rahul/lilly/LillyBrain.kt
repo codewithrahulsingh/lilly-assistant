@@ -105,7 +105,7 @@ class LillyBrain(private val ctx: Context) {
     fun stripWakeWord(t: String) = Parser.stripWakeWord(t)
     fun looksLikeCommand(t: String) = t.split(" ").count { it.isNotBlank() } >= 2
     fun roman(t: String) = Parser.roman(t)
-    fun hasAiKey() = !prefs.getString("ai_key", "").isNullOrBlank()
+    fun hasAiKey() = !prefs.getString("ai_key", "").isNullOrBlank() || !prefs.getString("ai2_key", "").isNullOrBlank()
 
     /** Phone locked hai ya nahi */
     fun isLocked(): Boolean =

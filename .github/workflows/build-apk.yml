@@ -50,8 +50,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v4.5-build${{ github.run_number }}
-          name: Lilly v4.5 (build ${{ github.run_number }})
+          tag_name: v4.6-build${{ github.run_number }}
+          name: Lilly v4.6 (build ${{ github.run_number }})
           body: "Download Lilly.apk on your phone and install it."
           files: Lilly.apk
           make_latest: true
