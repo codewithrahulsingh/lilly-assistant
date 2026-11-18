@@ -408,6 +408,37 @@ class LillyBrain(private val ctx: Context) {
 
     // ---------- Phone settings ----------
 
+    /**
+     * "WiFi band karo": Android apps ko khud switch badalne nahi deta — Lilly switch wala panel kholti hai
+     * aur "Lilly helper" ON ho toh switch khud daba deti hai.
+     */
+    private fun switchReply(name: String, want: String): Reply? {
+        if (want.isBlank()) return null
+        val on = want == "on"
+        val label = mapOf("wifi" to "WiFi", "bluetooth" to "Bluetooth", "location" to "Location", "airplane" to "Airplane mode")[name] ?: return null
+        val labelHi = mapOf("wifi" to "वाई-फाई", "bluetooth" to "ब्लूटूथ", "location" to "लोकेशन", "airplane" to "एयरप्लेन मोड")[name] ?: label
+        if (name == "wifi") {
+            val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val now = try { wm?.isWifiEnabled } catch (e: Exception) { null }
+            if (now == on) return Reply("$label is already ${if (on) "on" else "off"}", "$labelHi पहले से ${if (on) "ऑन" else "बंद"} है", endChat = true)
+        }
+        val intent = if (name == "wifi" && Build.VERSION.SDK_INT >= 29) Intent(Settings.Panel.ACTION_WIFI)
+        else if (name == "location") Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS) else panelIntent(name)
+        val helper = LillyAccess.enabled(ctx)
+        return if (helper) Reply(
+            "Turning $label ${if (on) "on" else "off"}",
+            "$labelHi ${if (on) "ऑन" else "बंद"} कर रही हूँ",
+            {
+                LillyAccess.flipSwitch(name, on)
+                openExternal(intent, "Settings")
+            }, endChat = true
+        ) else Reply(
+            "I've opened $label — tap the switch to turn it ${if (on) "on" else "off"}. (Turn on \"Lilly helper\" in the app and I'll do it myself.)",
+            "$labelHi का स्विच खोल दिया है, ${if (on) "ऑन" else "बंद"} कर लीजिए",
+            { openExternal(intent, "Settings") }, endChat = true
+        )
+    }
+
     private fun panelIntent(name: String): Intent {
         val q = Build.VERSION.SDK_INT >= 29
         return when (name) {
@@ -489,7 +520,9 @@ class LillyBrain(private val ctx: Context) {
                 }, endChat = true)
             }
             else -> {
-                val name = c.value
+                val name = c.value.substringBefore(':')
+                val want = c.value.substringAfter(':', "")
+                switchReply(name, want)?.let { return it }
                 val label = mapOf(
                     "wifi" to "Wi-Fi", "data" to "mobile data", "bluetooth" to "Bluetooth", "hotspot" to "hotspot",
                     "airplane" to "airplane mode", "location" to "location", "battery" to "battery saver",

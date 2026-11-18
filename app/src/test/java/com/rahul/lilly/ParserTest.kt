@@ -657,7 +657,7 @@ class NewFeaturesTest {
         assertEquals(SettingCmd("ringer", "vibrate"), p("vibrate mode on karo"))
         assertEquals(SettingCmd("ringer", "normal"), p("normal mode"))
         assertEquals(SettingCmd("panel", "wifi"), p("WiFi settings kholo"))
-        assertEquals(SettingCmd("panel", "bluetooth"), p("bluetooth on karo"))
+        assertEquals(SettingCmd("panel", "bluetooth:on"), p("bluetooth on karo"))
         assertEquals(SettingCmd("panel", "hotspot"), p("hotspot on karo"))
         assertEquals(Cmd.Volume("mute"), p("mute karo"))
         assertEquals(Cmd.Battery, p("battery kitni hai"))
@@ -793,5 +793,15 @@ class ExtrasTest {
         eq("torch jalao" to "volume badhao", Extras.splitTwo("torch jalao aur volume badhao") { Parser.parse(it) }!!)
         org.junit.Assert.assertNull(Extras.splitTwo("spotify kholo aur kesariya bajao") { Parser.parse(it) })
         org.junit.Assert.assertNull(Extras.splitTwo("rahul ko whatsapp karo ki main aur ankit aa rahe hai") { Parser.parse(it) })
+    }
+}
+
+class SpellingTest {
+    @org.junit.Test fun fixesAndTwoCommands() {
+        org.junit.Assert.assertEquals("WiFi band karo aur torch chalao", Parser.roman("vi-fi band karo aur torch chalao"))
+        org.junit.Assert.assertEquals(SettingCmd("panel", "wifi:off"), Parser.parse("vi-fi band karo"))
+        org.junit.Assert.assertEquals("vi-fi band karo" to "torch chalao", Extras.splitTwo(Parser.normalize("vi-fi band karo aur torch chalao")) { Parser.parse(it) }?.let { it.first.replace("wifi", "vi-fi") to it.second })
+        org.junit.Assert.assertEquals("WhatsApp kholo", Parser.roman("watsap kholo"))
+        org.junit.Assert.assertEquals(SettingCmd("panel", "bluetooth:on"), Parser.parse("blue tooth chalu karo"))
     }
 }

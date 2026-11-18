@@ -122,11 +122,38 @@ object Parser {
 
     /** "ओपन यूट्यूब" -> "open youtube". Roman text jaisa hai waisa rehta hai. */
     fun roman(t: String): String {
-        if (!hasDevanagari(t)) return t.trim()
-        return t.split(Regex("\\s+")).filter { it.isNotBlank() }.joinToString(" ") { w ->
+        if (!hasDevanagari(t)) return fixSpelling(t.trim())
+        return fixSpelling(t.split(Regex("\\s+")).filter { it.isNotBlank() }.joinToString(" ") { w ->
             val core = w.trim(',', '.', '?', '!', '।').replace("़", "")
             hiWords[core] ?: if (hasDevanagari(core)) transliterate(core) else core
-        }
+        })
+    }
+
+    /** Google / Hindi lipi se aaye galat spelling sahi: "vi-fi" -> WiFi, "watsap" -> WhatsApp */
+    private val spellings: List<Pair<Regex, String>> = listOf(
+        """\b(?:vi|wi|wai|vai|vaai|waai|why|bai)[\s\-‑]?(?:fi|fai|faai|phi|phai|fy)\b""" to "WiFi",
+        """\bw\s?l\s?a\s?n\b""" to "WiFi",
+        """\b(?:blue|blu|bloo|bluu)[\s\-]?(?:tooth|tuth|tut|tooth|tuuth|toot)\b""" to "Bluetooth",
+        """\bhot[\s\-]?(?:spot|spat|sport)\b""" to "hotspot",
+        """\b(?:whats|wats|vats|vots|whts|votts|vhats)[\s\-]?(?:app|ap|aap|aip|aep|aipp|epp)\b""" to "WhatsApp",
+        """\b(?:spoti|spot)[\s\-]?(?:fy|fai|faai|phy|fi)\b""" to "Spotify",
+        """\b(?:you|yu|yoo)[\s\-]?(?:tube|tub|toob|tyub|tuub)\b""" to "YouTube",
+        """\binsta[\s\-]?(?:gram|graam)\b""" to "Instagram",
+        """\b(?:tourch|torche|tarch|tauch)\b""" to "torch",
+        """\bflash[\s\-]?light\b""" to "flashlight",
+        """\b(?:volumn|valume|volyum|vollume)\b""" to "volume",
+        """\b(?:alaram|alarum|allarm)\b""" to "alarm",
+        """\b(?:calender|kalendar|calandar)\b""" to "calendar",
+        """\b(?:mobile|mobail)\s+(?:deta|daata)\b""" to "mobile data",
+        """\b(?:aeroplane|airoplane|eroplane)\s+mode\b""" to "airplane mode",
+        """\b(?:lokeshan|location|lokation)\b""" to "location"
+    ).map { Regex(it.first, RegexOption.IGNORE_CASE) to it.second }
+
+    fun fixSpelling(t: String): String {
+        var s = t
+        // Pehle se sahi likha ho ("youtube") toh waisa hi rehne do
+        for ((re, to) in spellings) s = re.replace(s) { m -> if (m.value.equals(to, true)) m.value else to }
+        return s
     }
 
     private val consonants = mapOf(

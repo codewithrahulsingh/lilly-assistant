@@ -70,6 +70,9 @@ class LillyAccess : AccessibilityService() {
             return try { i.disableSelf(); true } catch (e: Exception) { false }
         }
 
+        /** Settings me WiFi / Bluetooth / Location / Airplane ka switch on ya off karo */
+        fun flipSwitch(name: String, on: Boolean) = start("switch", "$name|$on", 12_000)
+
         /** Call screen par "Speaker" dabao */
         fun pressSpeaker() = start("speaker", "", 15_000)
 
@@ -189,6 +192,25 @@ class LillyAccess : AccessibilityService() {
                 val btn = byLabel(root, names) ?: return
                 if (clickable(btn)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) job = null
             }
+            "switch" -> {
+                val name = j.query.substringBefore('|')
+                val on = j.query.substringAfter('|') == "true"
+                val re = when (name) {
+                    "wifi" -> Regex("""(?i)\bwi[\-‑ ]?fi\b|wlan|वाई""")
+                    "bluetooth" -> Regex("""(?i)bluetooth|ब्लूटूथ""")
+                    "location" -> Regex("""(?i)location|स्थान|लोकेशन""")
+                    else -> Regex("""(?i)airplane|aeroplane|flight|हवाई""")
+                }
+                // Jis switch ke sabse paas naam likha ho (doosre switch ki line ka naam na pakde)
+                val sw = findAll(root) { n -> n.isVisibleToUser && n.isCheckable }
+                    .mapNotNull { n -> matchDepth(n, re)?.let { n to it } }
+                    .minByOrNull { it.second }?.first ?: return
+                if (sw.isChecked == on) { job = null; main.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 700); return }
+                if (clickable(sw)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                    job = null
+                    main.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 1200)
+                }
+            }
             "speaker" -> {
                 if (!Regex("dialer|incall|telecom|phone|contacts|call", RegexOption.IGNORE_CASE).containsMatchIn(pkg)) return
                 val spk = findAll(root) { n ->
@@ -236,6 +258,23 @@ class LillyAccess : AccessibilityService() {
             n.isVisibleToUser && !n.isEditable && t.isNotBlank() && q.all { it in t }
         }.filter { n -> n.getBoundsInScreen(r); r.top > boxBottom }
         return topMost(byName.mapNotNull { clickable(it) }.filter { !it.isEditable && run { it.getBoundsInScreen(r); r.top >= boxBottom } })
+    }
+
+    /** Switch ka naam kitni door likha hai: 0 = khud, 1 = uski line, 2-3 = upar. Na mile toh null */
+    private fun matchDepth(n: AccessibilityNodeInfo, re: Regex): Int? {
+        val own = listOfNotNull(n.text, n.contentDescription).joinToString(" ")
+        if (re.containsMatchIn(own)) return 0
+        var p = n.parent
+        var depth = 1
+        while (p != null && depth <= 3) {
+            // Is line me koi aur switch bhi ho toh ye naam uska bhi ho sakta hai — aage mat badho
+            val switches = findAll(p) { it.isCheckable }.size
+            val texts = findAll(p) { it.text != null || it.contentDescription != null }
+                .joinToString(" ") { listOfNotNull(it.text, it.contentDescription).joinToString(" ") }
+            if (re.containsMatchIn(texts)) return if (switches > 1) depth + 10 else depth
+            p = p.parent; depth++
+        }
+        return null
     }
 
     /** Button jiska naam (contentDescription / text) inme se ho */

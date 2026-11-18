@@ -256,7 +256,15 @@ object MoreCommands {
             "display" to """\b(display settings|screen settings)\b""",
             "sound" to """\b(sound settings|ringtone settings)\b"""
         )
-        for ((name, re) in panels) if (Regex(re).containsMatchIn(t)) return SettingCmd("panel", name)
+        for ((name, re) in panels) if (Regex(re).containsMatchIn(t)) {
+            // "wifi band karo" -> wifi:off, "bluetooth chalu karo" -> bluetooth:on (Lilly helper switch daba deta hai)
+            val state = when {
+                offWords.containsMatchIn(t) -> ":off"
+                Regex("""\b(on|chalu|chaalu|chalao|start|enable|activate|jalao|laga do|lagao|connect)\b""").containsMatchIn(t) -> ":on"
+                else -> ""
+            }
+            return SettingCmd("panel", if (name in setOf("wifi", "bluetooth", "location", "airplane")) name + state else name)
+        }
         if (Regex("""^(?:open\s+)?(?:phone\s+)?settings?(?:\s+(?:kholo|open karo|khol do))?$""").containsMatchIn(t)) return SettingCmd("panel", "settings")
         return null
     }
