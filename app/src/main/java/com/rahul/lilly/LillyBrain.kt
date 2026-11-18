@@ -127,6 +127,7 @@ class LillyBrain(private val ctx: Context) {
         answerPendingWa(heard)?.let { return it }
         answerPendingCall(heard)?.let { return it }
         answerPendingAlarm(heard)?.let { return it }
+        abuseReply(heard.first())?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
         val reply = twoAtOnce(texts.first()) ?: decide(texts, allowAi)
@@ -143,6 +144,34 @@ class LillyBrain(private val ctx: Context) {
         val r = handle(command, emptyList(), allowAi = false)
         if (r.action != null && !r.failed) learner.teach(question, command, taught = false)
         return r
+    }
+
+    /**
+     * Gaali mode: "gaali mode on/off"; gaali aaye toh AI ke paas nahi — mode ON ho toh gaali me jawab,
+     * OFF ho toh shaant jawab. Gaali ke saath koi kaam bhi bola ho ("bc torch jala") toh kaam bhi.
+     */
+    private fun abuseReply(text: String): Reply? {
+        val t = Parser.normalize(text)
+        Abuse.toggle(t)?.let { on ->
+            prefs.edit().putBoolean("abuse_mode", on).apply()
+            return if (on) Reply("Gaali mode ON 😈 — ab gaali doge toh waisa hi jawab milega", "गाली मोड ऑन। अब गाली दोगे तो वैसा ही जवाब मिलेगा", endChat = true)
+            else Reply("Gaali mode OFF — ab tameez se", "गाली मोड बंद। अब तमीज़ से बात करूँगी", endChat = true)
+        }
+        if (!Abuse.has(t)) return null
+        val on = prefs.getBoolean("abuse_mode", false)
+        val en = Parser.isEnglish(text)
+        val rest = Abuse.strip(t)
+        if (rest.split(" ").count { it.isNotBlank() } >= 1) {
+            val c = Parser.parse(rest)
+            if (c !is Cmd.Unknown && c !is Cmd.Chat) {
+                val r = decide(listOf(rest), false)
+                if (!on || r.failed) return r
+                val (d, sp) = Abuse.jab()
+                return r.copy(display = d + "\n" + r.display, spoken = sp + " " + r.spoken, spokenEn = null)
+            }
+        }
+        val (d, sp) = Abuse.reply(on, en)
+        return Reply(d, sp, endChat = false)
     }
 
     /** "torch jalao aur volume badhao" — dono kaam ek ke baad ek */

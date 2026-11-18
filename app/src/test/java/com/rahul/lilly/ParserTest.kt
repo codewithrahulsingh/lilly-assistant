@@ -805,3 +805,15 @@ class SpellingTest {
         org.junit.Assert.assertEquals(SettingCmd("panel", "bluetooth:on"), Parser.parse("blue tooth chalu karo"))
     }
 }
+
+class AbuseTest {
+    @org.junit.Test fun gaaliMode() {
+        org.junit.Assert.assertTrue(Abuse.has("bc torch jala"))
+        org.junit.Assert.assertEquals("torch jala", Abuse.strip("bc torch jala"))
+        org.junit.Assert.assertFalse(Abuse.has("amazon sale kab hai"))
+        org.junit.Assert.assertFalse(Abuse.has("chhod do"))
+        org.junit.Assert.assertEquals(true, Abuse.toggle("gaali mode on karo"))
+        org.junit.Assert.assertEquals(false, Abuse.toggle("abuse mode band karo"))
+        org.junit.Assert.assertNull(Abuse.toggle("torch jalao"))
+    }
+}

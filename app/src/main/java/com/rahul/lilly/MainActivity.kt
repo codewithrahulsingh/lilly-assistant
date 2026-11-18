@@ -48,6 +48,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var placesValue: TextView
     private lateinit var ai2Value: TextView
     private lateinit var matchValue: TextView
+    private lateinit var abuseValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -229,6 +230,10 @@ class MainActivity : Activity(), LillyBus.Ui {
         ai2Value = card(r12, "🔌", "Second AI (freemodel etc.)") { ai2Setup() }
         card(r12, "📴", "Use without internet") { offlineHelp() }.text = "What works offline + setup"
 
+        val r13 = row(col)
+        abuseValue = card(r13, "🤬", "Gaali mode") { abuseSetup() }
+        card(r13, "🗣", "Spellings") { showSpellings() }.text = "Words Lilly auto-corrects"
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -261,6 +266,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        abuseValue.text = if (prefs.getBoolean("abuse_mode", false)) "ON 😈 swears back at you" else "OFF — polite replies"
         matchValue.text = when {
             VoiceMatch.active(this) -> "ON ✓ wakes only for you (" + VoiceMatch.level(this).replaceFirstChar { it.uppercase() } + ")"
             VoiceMatch.voicePrint(this).ready -> "OFF — tap to turn on"
@@ -1224,6 +1230,34 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "• On the lock screen, calls go only to the list you chose\n" +
                     "• Opening an app from the lock screen asks you to unlock first\n" +
                     "• App data backup is off"
+            )
+            .setPositiveButton("OK", null).show()
+    }
+
+    private fun abuseSetup() {
+        val on = prefs.getBoolean("abuse_mode", false)
+        AlertDialog.Builder(this).setTitle("🤬 Gaali mode")
+            .setMessage(
+                "When ON: if you swear at Lilly, she swears back in Hindi/English (strong words!) — and still does any job you asked, like \"bc torch jala\".\n\n" +
+                    "When OFF: she calmly asks you not to swear.\n\n" +
+                    "Either way these replies come from the phone itself, not the AI, so she never refuses.\n\n" +
+                    "You can also say: \"Lilly, gaali mode on\" / \"gaali mode band karo\".\n\n" +
+                    "Tip: keep it OFF when other people (or kids) are around."
+            )
+            .setPositiveButton(if (on) "Turn OFF" else "Turn ON") { _, _ ->
+                prefs.edit().putBoolean("abuse_mode", !on).apply(); refreshCards()
+            }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun showSpellings() {
+        AlertDialog.Builder(this).setTitle("🗣 Auto-corrected words")
+            .setMessage(
+                "Google sometimes writes words wrong. Lilly fixes them before acting:\n\n" +
+                    "vi-fi, wai fai, वाई-फाई → WiFi\nblue tooth → Bluetooth\nwatsap, vats app → WhatsApp\n" +
+                    "spoti fy → Spotify\nyou tube → YouTube\ninsta gram → Instagram\ntourch → torch\nvolumn → volume\n" +
+                    "alaram → alarm\ncalender → calendar\naeroplane mode → airplane mode\n\n" +
+                    "If Lilly mis-hears some other word, send it to the developer to add here."
             )
             .setPositiveButton("OK", null).show()
     }
