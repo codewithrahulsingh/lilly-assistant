@@ -127,7 +127,8 @@ class LillyBrain(private val ctx: Context) {
         answerPendingWa(heard)?.let { return it }
         answerPendingCall(heard)?.let { return it }
         answerPendingAlarm(heard)?.let { return it }
-        abuseReply(heard.first())?.let { return it }
+        // Google ke kisi bhi andaze me gaali ho toh pakdo
+        abuseReply(heard.firstOrNull { Abuse.has(Parser.normalize(it)) || Abuse.toggle(Parser.normalize(it)) != null } ?: heard.first())?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
         val reply = twoAtOnce(texts.first()) ?: decide(texts, allowAi)

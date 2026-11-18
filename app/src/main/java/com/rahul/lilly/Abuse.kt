@@ -7,12 +7,22 @@ package com.rahul.lilly
  */
 object Abuse {
 
+    // Google har baar alag spelling likhta hai ("bahan chod", "behenchod", "bhen chod"…) — isliye lachila pattern
     private val words = Regex(
-        """\b(bc|mc|bsdk|bkl|mkc|bhenchod|behenchod|bhencho|behencho|bhen ?chod|behen ?chod|madarchod|maderchod|madar ?chod|""" +
-            """chutiya|chutiye|chutia|chutiyo|chu+tiya|bhosdi|bhosdike|bhosdika|bhosda|bhosadi|bhosadike|gandu|gaandu|gand|gaand|""" +
-            """harami|haraami|haramkhor|kamina|kamine|kaminey|saala|saale|kutte ki aulad|kutiya|ullu ka pattha|ullu ke patthe|""" +
-            """lodu|lode|lauda|laude|lund|jhatu|jhaatu|chodu|bewakoof|bewkoof|""" +
-            """fuck|fucking|fucker|motherfucker|bitch|bastard|asshole|dumbass|idiot|stupid|moron|shut up|useless)\b"""
+        listOf(
+            """bc|mc|bsdk|bkl|mkc|bhosdi ?wale""",
+            """b+h?[aeiu]*h?[aeiu]*n+[\s\-]?(?:k[eiy][\s\-]?)?ch?o+d\w*""",       // bahanchod, behen chod, bhen ke chod…
+            """b+h?[aeiu]*h?[aeiu]*n+[\s\-]?k[eiy][\s\-]?(?:l[ao]+d|l[ao]+[vw]d)\w*""", // behen ke lode
+            """m+[aeiou]+d+[aeiou]*r+[\s\-]?ch?o+d\w*""",                         // madarchod, maadar chod
+            """m[aeiou]+ ?k[eiy] ?(?:ch?o+d|l[ao]+d|l[ao]+[vw]d)\w*""",            // maa ke…
+            """ch[uo]+t[iy]+[ay]?[aeo]?\w*|ch[uo]+t\b""",                          // chutiya, chutiye, chutiyapa
+            """bh?o+s[aeiou]*d[aeiou]*\w*|bh?o+s[aeiou]*r[aeiou]*\w*""",          // bhosdike, bhosadi, bhosda
+            """g+a+n+d+u+\w*|gaand\w*""",
+            """l[ao]+u?d[aeu]\w*|l[ao]+[vw]d[aeu]\w*|lund\w*|jh[aeiou]+t[uo]+\w*""",
+            """har+a+m+i+|har+a+m+kh?or\w*|kam+i+n[aeiy]+\w*|saa?l[ae]+ (?:kutt|kamin|harami)\w*|saale|saala""",
+            """kutt[ae] ?ki ?aulaa?d|kutiya|ullu ?k[ae] ?patth?[ae]|bewa?kooo?f|pagal hai kya|pagal ho kya|tu pagal""",
+            """fuck\w*|motherfuck\w*|bitch\w*|bastard|asshole|dumbass|idiot|stupid|moron|shut up|useless"""
+        ).joinToString("|", prefix = """\b(?:""", postfix = """)\b""")
     )
 
     /** Bole hue me gaali hai? */

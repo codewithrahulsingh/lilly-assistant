@@ -817,3 +817,12 @@ class AbuseTest {
         org.junit.Assert.assertNull(Abuse.toggle("torch jalao"))
     }
 }
+
+class AbuseSpellingTest {
+    @org.junit.Test fun variants() {
+        for (t in listOf("bahan chod pagal hai kya", "behenchod", "bhen chod", "madarchod", "maadar chod", "chutiye", "bhosdike", "bhosadi ke", "gaandu", "lode", "harami", "kamine", "fuck you", "bc"))
+            org.junit.Assert.assertTrue(t, Abuse.has(t))
+        for (t in listOf("chhutti kab hai", "amazon sale", "bahan ko call karo", "mera bhai", "chod do yaar", "london ka mausam", "bhojan", "behen ki shaadi"))
+            org.junit.Assert.assertFalse(t, Abuse.has(t))
+    }
+}
