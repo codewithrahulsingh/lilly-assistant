@@ -22,7 +22,7 @@ import org.json.JSONObject
  */
 class RealVoice(private val ctx: Context) {
 
-    data class VoiceOption(val name: String, val about: String)
+    data class VoiceOption(val name: String, val about: String, val male: Boolean = false)
 
     companion object {
         /** Gemini ki female awaazein */
@@ -34,15 +34,24 @@ class RealVoice(private val ctx: Context) {
             VoiceOption("Vindemiatrix", "Gentle"),
             VoiceOption("Despina", "Smooth"),
             VoiceOption("Zephyr", "Bright"),
-            VoiceOption("Kore", "Firm, confident")
+            VoiceOption("Kore", "Firm, confident"),
+            // Ladke ki awaazein
+            VoiceOption("Puck", "Upbeat", true),
+            VoiceOption("Achird", "Friendly", true),
+            VoiceOption("Charon", "Calm, clear", true),
+            VoiceOption("Orus", "Firm", true),
+            VoiceOption("Fenrir", "Energetic", true),
+            VoiceOption("Algieba", "Smooth", true)
         )
+
+        fun isMale(name: String) = VOICES.firstOrNull { it.name == name }?.male == true
         const val DEFAULT = "Sulafat"
         const val OFF = "off"
 
         private val MODELS = listOf("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
         private const val URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         private const val WAIT_MS = 9000L
-        private const val MAX_CACHE = 200
+        private const val MAX_CACHE = 300
 
         /** Limit/galti ke baad kuch der phone ki awaaz se kaam chalao */
         @Volatile private var pausedUntil = 0L
@@ -54,7 +63,10 @@ class RealVoice(private val ctx: Context) {
 
     private val prefs = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
-    private val dir = File(ctx.cacheDir, "voice").apply { mkdirs() }
+    // Nayi lines (AI jawab) — purani apne aap hat-ti hain
+    private val dir = File(ctx.filesDir, "voice").apply { mkdirs() }
+    // Roz ki pakki lines — kabhi nahi hat-ti (phone ki safai me bhi nahi)
+    private val keepDir = File(ctx.filesDir, "voice-keep").apply { mkdirs() }
     private var player: MediaPlayer? = null
     private var token = 0
 
@@ -66,17 +78,27 @@ class RealVoice(private val ctx: Context) {
 
     fun label(): String = if (enabled()) "Real voice: $voice" else "Phone voice"
 
+    fun isMale(): Boolean = isMale(voice)
+
+    /** Kitni pakki lines ban chuki (x / total) */
+    fun keptCount(lines: List<String>): Int = lines.count { keepFile(voice, it).exists() }
+
     /**
      * Bolo. onDone = bolna khatam. onFallback = real awaaz nahi mil payi, phone ki awaaz se bolo.
      * Dono me se sirf ek hi chalega.
      */
     fun speak(
         text: String, onDone: () -> Unit, onFallback: () -> Unit,
-        waitMs: Long = WAIT_MS, force: Boolean = false
+        waitMs: Long = WAIT_MS, force: Boolean = false, voiceName: String? = null
     ) {
         stop()
         val my = ++token
-        val v = voice
+        val v = voiceName ?: voice
+        val kept = keepFile(v, text)
+        if (kept.exists() && kept.length() > 100) {
+            play(kept, my, onDone, onFallback)
+            return
+        }
         val file = cacheFile(v, text)
         if (file.exists() && file.length() > 100) {
             file.setLastModified(System.currentTimeMillis())
@@ -113,16 +135,32 @@ class RealVoice(private val ctx: Context) {
         }.start()
     }
 
-    /** Roz ki lines pehle se tayyar rakho, taaki "Yes Rahul…" turant aaye */
+    @Volatile private var prefetching = false
+
+    /**
+     * Roz ki lines ek-ek karke Gemini awaaz me bana ke hamesha ke liye save karo.
+     * Dheere-dheere (free limit ka dhyan), limit aaye toh ruk jao — agli baar wahin se aage.
+     */
     fun prefetch(vararg lines: String) {
-        if (!enabled()) return
+        if (!enabled() || prefetching) return
         val v = voice
+        val todo = lines.filter { !keepFile(v, it).exists() }
+        if (todo.isEmpty()) return
+        prefetching = true
         Thread {
-            for (l in lines) {
-                val f = cacheFile(v, l)
-                if (f.exists() || System.currentTimeMillis() < pausedUntil) continue
-                try { fetch(l, v, f) } catch (e: Exception) { }
-            }
+            try {
+                for (l in todo.take(25)) { // ek baar me thodi hi (free limit bachi rahe)
+                    if (System.currentTimeMillis() < pausedUntil || voice != v) break
+                    val f = keepFile(v, l)
+                    if (f.exists()) continue
+                    // Pehle se bani ho (cache me) toh wahi pakki kar do
+                    val c = cacheFile(v, l)
+                    if (c.exists() && c.length() > 100 && c.renameTo(f)) continue
+                    val ok = try { fetch(l, v, f) } catch (e: Exception) { false }
+                    if (!ok) break
+                    Thread.sleep(20_000) // free limit: minute me kuch hi
+                }
+            } finally { prefetching = false }
         }.start()
     }
 
@@ -170,6 +208,11 @@ class RealVoice(private val ctx: Context) {
         if (my == token) onDone()
     }
 
+    private fun keepFile(voice: String, text: String): File {
+        val md = MessageDigest.getInstance("SHA-1").digest("$voice|$text".toByteArray(Charsets.UTF_8))
+        return File(keepDir, md.joinToString("") { "%02x".format(it) } + ".wav")
+    }
+
     private fun cacheFile(voice: String, text: String): File {
         val md = MessageDigest.getInstance("SHA-1").digest("$voice|$text".toByteArray(Charsets.UTF_8))
         return File(dir, md.joinToString("") { "%02x".format(it) } + ".wav")
@@ -179,7 +222,9 @@ class RealVoice(private val ctx: Context) {
     private fun fetch(text: String, voice: String, out: File): Boolean {
         val key = this.key
         if (key.isEmpty()) return false
-        val prompt = "Say this in a warm, friendly, natural voice, like a young Indian woman talking to a friend: $text"
+        val who = if (isMale(voice)) "a young Indian man" else "a young Indian woman"
+        val prompt = "Say this in a warm, friendly, natural voice, like $who talking to a friend. " +
+            "Speak Hindi words with natural Hindi pronunciation and English words with natural Indian English: $text"
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
             .put(

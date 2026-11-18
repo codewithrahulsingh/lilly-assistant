@@ -440,19 +440,32 @@ class LillyService : Service() {
         val saved = prefs.getString("voice_source", null)
         return when {
             saved == "phone" -> "phone"
-            OfflineVoice.installed(this) -> "offline"
+            // Gemini awaaz chuni (pakki) — wahi; na bane toh neeche offline awaaz bachav ke liye
             saved == "gemini" && realVoice.enabled() -> "gemini"
+            OfflineVoice.installed(this) -> "offline"
             else -> "phone"
         }
     }
 
-    private fun prefetchVoice() = realVoice.prefetch(
-        *(listOf(
+    /** Lilly ladke ki awaaz me hai? */
+    private var lastPrefetch = 0L
+
+    private fun maleVoice(): Boolean = when (voiceSource()) {
+        "gemini" -> realVoice.isMale()
+        "offline" -> OfflineVoice.isMale(this)
+        else -> false
+    }
+
+    private fun prefetchVoice() {
+        val male = realVoice.isMale()
+        val lines = (listOf(
             "Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ",
             "I didn't hear anything", "कुछ सुनाई नहीं दिया",
             moreFiller.first, moreFiller.second
-        ) + fillers.flatMap { listOf(it.first, it.second) }).toTypedArray()
-    )
+        ) + fillers.flatMap { listOf(it.first, it.second) } + CommonLines.ALL)
+            .map { if (male) Persona.masculine(it) else it }.distinct()
+        realVoice.prefetch(*lines.toTypedArray())
+    }
 
     private fun voiceLabel(): String {
         when (voiceSource()) {
@@ -468,9 +481,7 @@ class LillyService : Service() {
     private fun nextVoice() {
         if (voiceSource() == "offline") { testVoice(); return }
         if (voiceSource() == "gemini") {
-            val all = RealVoice.VOICES
-            val cur = all.indexOfFirst { it.name == realVoice.voice }
-            prefs.edit().putString("real_voice", all[(cur + 1) % all.size].name).apply()
+            // Awaaz pakki hai — khud nahi badalti (badalni ho toh app me "Choose voice")
             testVoice()
             prefetchVoice()
             return
@@ -550,7 +561,7 @@ class LillyService : Service() {
     private fun say(display0: String, spoken0: String, then: (() -> Unit)? = null) {
         if (mode == Mode.STOPPED) return
         // Ladke ki awaaz chuni hai toh baatein bhi ladke wali (karunga, raha hoon)
-        val male = voiceSource() == "offline" && OfflineVoice.isMale(this)
+        val male = maleVoice()
         val display = if (male) Persona.masculine(display0) else display0
         val spoken = if (male) Persona.masculine(spoken0) else spoken0
         handler.removeCallbacks(wakeRunnable)
@@ -587,10 +598,19 @@ class LillyService : Service() {
         }
         if (src == "gemini") {
             // Asli insaan jaisi awaaz; na mile toh phone ki awaaz se
-            handler.postDelayed(speakTimeout, 6000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
+            handler.postDelayed(speakTimeout, 16_000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
             realVoice.speak(spoken,
                 onDone = { finishSpeaking(id) },
-                onFallback = { if (currentUtterance == id) speakDevice(spoken, id) })
+                onFallback = {
+                    if (currentUtterance != id) return@speak
+                    // Gemini na mile: same ladki/ladka wali offline awaaz, warna phone ki
+                    val backup = OfflineVoice.CHOICES.firstOrNull { it.male == realVoice.isMale() && OfflineVoice.packInstalled(this, it.pack) }
+                    if (backup == null) speakDevice(spoken, id)
+                    else OfflineVoice.speak(this, spoken, prefs.getFloat("voice_speed", 1.0f),
+                        onDone = { finishSpeaking(id) },
+                        onFail = { if (currentUtterance == id) speakDevice(spoken, id) },
+                        voiceId = backup.id)
+                })
             return
         }
         speakDevice(spoken, id)
@@ -739,6 +759,11 @@ class LillyService : Service() {
     // ---------------- Listening ----------------
 
     private fun listen(newMode: Mode) {
+        if (newMode == Mode.WAKE && voiceSource() == "gemini" &&
+            System.currentTimeMillis() - lastPrefetch > 20 * 60_000L) {
+            lastPrefetch = System.currentTimeMillis()
+            prefetchVoice() // roz ki lines dheere-dheere pakki awaaz me save
+        }
         if (mode == Mode.STOPPED && !started) return
         if (newMode == Mode.WAKE && voskModel != null) {
             handler.removeCallbacks(wakeRunnable)
@@ -1081,7 +1106,7 @@ class LillyService : Service() {
         Thread {
             var failure: Throwable? = null
             val inEnglish = english
-            AiChat.male = voiceSource() == "offline" && OfflineVoice.isMale(this)
+            AiChat.male = maleVoice()
             val result = try { AiChat.askWithFallback(prefs, history, question, facts, inEnglish) } catch (e: Exception) { failure = e; null }
             handler.post {
                 if (mode == Mode.STOPPED || my != aiToken) return@post

@@ -176,7 +176,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r1 = row(col)
         lockValue = card(r1, "🔒", "Lock screen call") { chooseLockMode() }
-        card(r1, "🎙", "Choose voice") { pickOfflineVoice() }
+        card(r1, "🎙", "Choose voice") { chooseGeminiVoice() }
             .text = "Pick one — it stays fixed"
 
         val r2 = row(col)
@@ -243,6 +243,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
         val src = prefs.getString("voice_source", null)
         realValue.text = when {
+            src == "gemini" && !(key.isBlank() || key.startsWith("sk-ant-")) && rv != RealVoice.OFF -> "🔒 $rv — human voice (Gemini)"
             OfflineVoice.installed(this) && src != "phone" && OfflineVoice.lastError != null -> "⚠️ Problem — tap to see"
             OfflineVoice.installed(this) && src != "phone" -> "🔒 ${OfflineVoice.chosen(this)?.name} — fixed, works offline"
             !OfflineVoice.installed(this) -> "Tap to download Lilly's human voice"
@@ -535,8 +536,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun chooseRealVoice() {
         val cur = OfflineVoice.chosen(this)
         val labels = arrayOf(
-            "⭐ Human voices (offline) — pick one, it never changes" + (cur?.let { " · now: ${it.name}" } ?: ""),
-            "Gemini voices — online, can switch to phone voice when slow or over the limit",
+            "Offline voices — Priyamvada (girl) / Pratham (boy), no internet" + (cur?.let { " · ${it.name} downloaded" } ?: ""),
+            "⭐ Gemini human voices — girl or boy, Hindi + English + Hinglish, stays fixed",
             "Phone voice — the phone's own text-to-speech"
         )
         AlertDialog.Builder(this)
@@ -544,7 +545,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setItems(labels) { _, which ->
                 when (which) {
                     0 -> pickOfflineVoice()
-                    1 -> { prefs.edit().putString("voice_source", "gemini").apply(); chooseGeminiVoice() }
+                    1 -> chooseGeminiVoice()
                     else -> useVoice("phone")
                 }
             }
@@ -681,41 +682,81 @@ class MainActivity : Activity(), LillyBus.Ui {
                 .setNegativeButton("Not now", null).show()
             return
         }
-        val codes = listOf(RealVoice.OFF) + RealVoice.VOICES.map { it.name }
-        val labels = listOf("Off — use the phone's voice") + RealVoice.VOICES.map { "${it.name} — ${it.about}" }
-        val cur = codes.indexOf(prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT)
+        val list = RealVoice.VOICES
+        val cur = if (prefs.getString("voice_source", null) == "gemini") prefs.getString("real_voice", null) else null
+        val labels = list.map { v ->
+            (if (v.name == cur) "🔒 " else "") + (if (v.male) "👨 " else "👩 ") + "${v.name} — ${v.about}"
+        }
         AlertDialog.Builder(this)
-            .setTitle("Choose Lilly's voice (tap to hear)")
-            .setSingleChoiceItems(labels.toTypedArray(), cur) { _, which ->
-                prefs.edit().putString("real_voice", codes[which]).apply()
-                refreshCards()
-                previewRealVoice(codes[which])
-            }
-            .setPositiveButton("Done", null)
+            .setTitle("Pick Lilly's voice (tap to hear)")
+            .setItems(labels.toTypedArray()) { _, which -> previewRealVoice(list[which].name, ask = true) }
+            .setNegativeButton("Close", null)
             .setNeutralButton("About") { _, _ ->
-                AlertDialog.Builder(this).setTitle("About the real voice").setMessage(
-                    "• Made by Google Gemini, so it needs internet the first time a sentence is spoken\n" +
-                        "• Every sentence is saved on the phone, so repeated lines (like \"Yes Rahul, how can I help?\") play instantly, even offline\n" +
-                        "• New sentences (like AI answers) can take 1–3 seconds\n" +
-                        "• If the internet is slow or the free limit runs out, Lilly uses the phone's voice for a while, so she never goes silent\n" +
+                AlertDialog.Builder(this).setTitle("About the voice").setMessage(
+                    "• Made by Google Gemini with your free Gemini key — speaks Hindi, English and Hinglish naturally\n" +
+                        "• Once you keep a voice it never changes by itself\n" +
+                        "• Lilly's everyday lines (\"Yes Rahul, how can I help?\", calling, alarms, torch…) are slowly saved on the phone in this voice, so they play instantly, even without internet\n" +
+                        "• New sentences (like AI answers) need internet and take 1–3 seconds\n" +
+                        "• If Gemini's free limit runs out or there's no internet, Priyamvada (girl) / Pratham (boy) fill in for new sentences, if downloaded\n" +
                         "• The text Lilly speaks is sent to Google to make the voice"
                 ).setPositiveButton("OK", null).show()
             }
             .show()
     }
 
+    /** Gemini awaaz pakki karo + bachav wali offline awaaz offer karo */
+    private fun keepGeminiVoice(name: String) {
+        prefs.edit().putString("real_voice", name).putString("voice_source", "gemini").apply()
+        refreshCards()
+        sendToEngine(LillyService.ACTION_TEST_VOICE)
+        val male = RealVoice.isMale(name)
+        val backup = OfflineVoice.CHOICES.first { it.male == male }
+        if (OfflineVoice.packInstalled(this, backup.pack)) {
+            android.widget.Toast.makeText(this, "$name is now Lilly's voice 🔒", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("$name is now Lilly's voice 🔒")
+            .setMessage(
+                "When there's no internet or Gemini's free limit runs out, Lilly needs a backup voice for new sentences.\n\n" +
+                    "Download ${backup.name} (${OfflineVoice.packMb(backup.pack)} MB, one time) as the backup? Otherwise the phone's voice is used."
+            )
+            .setPositiveButton("Download") { _, _ -> downloadBackup(backup) }
+            .setNegativeButton("Not now", null).show()
+    }
+
+    private fun downloadBackup(v: OfflineVoice.VoiceChoice) {
+        android.widget.Toast.makeText(this, "Downloading ${v.name} in the background…", android.widget.Toast.LENGTH_SHORT).show()
+        OfflineVoice.download(this, v.pack, progress = { }, done = { ok, err ->
+            if (isFinishing) return@download
+            android.widget.Toast.makeText(this, if (ok) "Backup voice ready ✓" else "Backup download failed: $err", android.widget.Toast.LENGTH_LONG).show()
+            refreshCards()
+        })
+    }
+
     private var preview: RealVoice? = null
 
     /** Chuni hui awaaz yahin suna do; na chale toh asli wajah dikhao */
-    private fun previewRealVoice(name: String) {
+    private fun previewRealVoice(name: String, ask: Boolean = false) {
         preview?.stop()
         if (name == RealVoice.OFF) return
         val rv = RealVoice(this)
         preview = rv
         android.widget.Toast.makeText(this, "Loading $name… (first time can take a few seconds)", android.widget.Toast.LENGTH_SHORT).show()
+        val male = RealVoice.isMale(name)
         rv.speak(
-            "Hi Rahul, I'm Lilly, and this is the $name voice. Kaisi lagi meri awaaz?",
-            onDone = { },
+            if (male) "Hi Rahul, main $name hoon. Aapka kaam main jaldi se kar dunga. Kaisi lagi meri awaaz?"
+            else "Hi Rahul, main $name hoon. Aapka kaam main jaldi se kar dungi. Kaisi lagi meri awaaz?",
+            onDone = {
+                if (!ask || isFinishing || preview !== rv) return@speak
+                AlertDialog.Builder(this).setTitle("Keep $name?")
+                    .setMessage("Lilly will always speak in this voice" +
+                        (if (male) " and talk like a boy (karunga, raha hoon)." else " and talk like a girl (karungi, rahi hoon).") +
+                        " It won't change by itself.")
+                    .setPositiveButton("Keep $name 🔒") { _, _ -> keepGeminiVoice(name) }
+                    .setNeutralButton("Hear again") { _, _ -> previewRealVoice(name, ask = true) }
+                    .setNegativeButton("Try another") { _, _ -> chooseGeminiVoice() }
+                    .show()
+            },
             onFallback = {
                 if (isFinishing || preview !== rv) return@speak
                 AlertDialog.Builder(this)
@@ -726,7 +767,7 @@ class MainActivity : Activity(), LillyBus.Ui {
                     )
                     .setPositiveButton("OK", null).show()
             },
-            waitMs = 25_000L, force = true
+            waitMs = 25_000L, force = true, voiceName = name
         )
     }
 
