@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 30
-        versionName = "5.3"
+        versionCode = 31
+        versionName = "5.4"
         // Sirf phone wale processor: APK chhoti aur install tez
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -41,4 +41,5 @@ dependencies {
     // Offline insaani awaaz (Piper voice) — build ke waqt GitHub se aata hai
     implementation(files("libs/sherpa-onnx.aar"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

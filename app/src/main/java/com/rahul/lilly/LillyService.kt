@@ -34,7 +34,6 @@ import java.util.Locale
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
-import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
 
 /**
@@ -48,6 +47,9 @@ class LillyService : Service() {
         const val ACTION_ACTIVATE = "com.rahul.lilly.ACTIVATE"
         const val ACTION_NEXT_VOICE = "com.rahul.lilly.NEXT_VOICE"
         const val ACTION_TEST_VOICE = "com.rahul.lilly.TEST_VOICE"
+        /** Voice match sikhate waqt mic app ko chahiye — Lilly thodi der sunna band kare */
+        const val ACTION_PAUSE_MIC = "com.rahul.lilly.PAUSE_MIC"
+        const val ACTION_RESUME_MIC = "com.rahul.lilly.RESUME_MIC"
         private const val START_CHANNEL = "lilly_start"
         private const val START_NOTIF_ID = 8
 
@@ -118,7 +120,16 @@ class LillyService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastEvent = 0L
     private var voskModel: Model? = null
-    private var voskService: SpeechService? = null
+    private var voskService: WakeMic? = null
+    @Volatile private var micPaused = false
+    @Volatile private var verifying = false
+    private val resumeMic = Runnable {
+        if (micPaused) {
+            micPaused = false
+            VoiceMatch.warmUp(this)
+            if (mode == Mode.WAKE || mode == Mode.COMMAND) listen(Mode.WAKE)
+        }
+    }
     private var voskRec: Recognizer? = null
     private var voskLoading = false
     private var floating: FloatingOrb? = null
@@ -281,6 +292,7 @@ class LillyService : Service() {
             getSystemService(NotificationManager::class.java).cancel(START_NOTIF_ID)
             loadWakeModel()
             OfflineVoice.warmUp(this)
+            VoiceMatch.warmUp(this)
             if (voiceSource() == "gemini") prefetchVoice()
             listen(Mode.WAKE)
             scheduleWatchdog()
@@ -289,6 +301,15 @@ class LillyService : Service() {
             ACTION_ACTIVATE -> activate(fromTap = true)
             ACTION_NEXT_VOICE -> nextVoice()
             ACTION_TEST_VOICE -> testVoice()
+            ACTION_PAUSE_MIC -> {
+                micPaused = true
+                handler.removeCallbacks(wakeRunnable)
+                stopVosk()
+                try { recognizer?.cancel() } catch (e: Exception) { }
+                LillyBus.status("Paused while you teach Lilly your voice…")
+                handler.postDelayed(resumeMic, 3 * 60_000L) // bhool gaye toh bhi 3 min baad wapas
+            }
+            ACTION_RESUME_MIC -> { handler.removeCallbacks(resumeMic); resumeMic.run() }
         }
         return START_STICKY
     }
@@ -633,6 +654,34 @@ class LillyService : Service() {
         }
     }
 
+    /**
+     * "Lilly" suna. Voice match ON ho toh pehle check: Rahul ki awaaz hai? (phone me, ~0.2 sec)
+     * Kisi aur ki ho toh chupchaap sunna jaari — na jaago, na bolo.
+     */
+    private fun wakeHeard(json: String?) {
+        if (!VoiceMatch.active(this)) { stopVosk(); activate(fromTap = false); return }
+        val clip = voskService?.clipFor(json) ?: FloatArray(0)
+        stopVosk()
+        verifying = true
+        val app = applicationContext
+        Thread {
+            val ok = if (VoiceMatch.loudEnough(clip)) VoiceMatch.verify(app, clip) else false
+            handler.post {
+                verifying = false
+                if (mode != Mode.WAKE || micPaused) return@post
+                val sc = VoiceMatch.lastScore
+                val pct = if (sc >= 0) " (${(sc * 100).toInt()}%)" else ""
+                if (ok) {
+                    LillyBus.heard("Voice match ✓$pct")
+                    activate(fromTap = false)
+                } else {
+                    LillyBus.status("Not Rahul's voice$pct — say \"Lilly\" again")
+                    if (!startVosk()) restartLater(800)
+                }
+            }
+        }.start()
+    }
+
     // ---------------- Listening ----------------
 
     private fun ensureRecognizer(): SpeechRecognizer? {
@@ -700,7 +749,9 @@ class LillyService : Service() {
             val rec = Recognizer(model, 16000.0f, wakeGrammar)
             try { rec.setWords(true) } catch (e: Exception) { } // har shabd ka bharosa (confidence) chahiye
             voskRec = rec
-            voskService = SpeechService(rec, 16000.0f).also { it.startListening(voskListener) }
+            val mic = WakeMic(rec, voskListener, handler)
+            if (!mic.start()) { try { rec.close() } catch (e: Exception) { }; voskRec = null; return false }
+            voskService = mic
             true
         } catch (e: Exception) {
             false
@@ -712,7 +763,6 @@ class LillyService : Service() {
         voskService = null
         if (v != null) {
             try { v.stop() } catch (e: Exception) { }
-            try { v.shutdown() } catch (e: Exception) { }
         }
         val r = voskRec
         voskRec = null
@@ -739,17 +789,11 @@ class LillyService : Service() {
         override fun onPartialResult(hypothesis: String?) {
             lastEvent = System.currentTimeMillis()
             // Poora vakya khatam hone ka intezaar nahi — "hey lily" sunte hi jaag jao
-            if (mode == Mode.WAKE && isWakeText(hypothesis, "partial")) {
-                stopVosk()
-                activate(fromTap = false)
-            }
+            if (mode == Mode.WAKE && !verifying && isWakeText(hypothesis, "partial")) wakeHeard(hypothesis)
         }
         override fun onResult(hypothesis: String?) {
             lastEvent = System.currentTimeMillis()
-            if (mode == Mode.WAKE && isWakeText(hypothesis, "text")) {
-                stopVosk()
-                activate(fromTap = false)
-            }
+            if (mode == Mode.WAKE && !verifying && isWakeText(hypothesis, "text")) wakeHeard(hypothesis)
         }
         override fun onFinalResult(hypothesis: String?) {}
         override fun onError(exception: Exception?) { restartLater(1500) }
@@ -765,6 +809,7 @@ class LillyService : Service() {
             prefetchVoice() // roz ki lines dheere-dheere pakki awaaz me save
         }
         if (mode == Mode.STOPPED && !started) return
+        if (micPaused) { mode = Mode.WAKE; return }
         if (newMode == Mode.WAKE && voskModel != null) {
             handler.removeCallbacks(wakeRunnable)
             try { recognizer?.cancel() } catch (e: Exception) { }

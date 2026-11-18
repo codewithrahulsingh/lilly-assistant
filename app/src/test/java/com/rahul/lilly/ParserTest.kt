@@ -762,3 +762,19 @@ class SmartTest {
         org.junit.Assert.assertTrue(Smart.isRefusal("Sorry, I can't access your WhatsApp"))
     }
 }
+
+class VoiceMatchTest {
+    @org.junit.Test fun gateAndScore() {
+        val me = floatArrayOf(1f, 0.2f, 0f)
+        val p = VoicePrint(mutableListOf(me, floatArrayOf(0.9f, 0.25f, 0.05f), floatArrayOf(1f, 0.15f, 0f)))
+        org.junit.Assert.assertTrue(p.score(floatArrayOf(1f, 0.2f, 0.02f)) > 0.9f)
+        org.junit.Assert.assertTrue(p.score(floatArrayOf(0f, 0f, 1f)) < 0.2f)
+        var t = 0L
+        val g = WakeGate { t }
+        org.junit.Assert.assertTrue(g.decide(0.6f, "normal"))
+        org.junit.Assert.assertFalse(g.decide(0.1f, "normal"))
+        org.junit.Assert.assertFalse(g.decide(0.42f, "normal")) // thoda kam — pehli baar nahi
+        t = 3000
+        org.junit.Assert.assertTrue(g.decide(0.42f, "normal"))  // turant dobara — haan
+    }
+}

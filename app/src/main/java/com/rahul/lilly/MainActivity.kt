@@ -47,6 +47,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var scriptValue: TextView
     private lateinit var placesValue: TextView
     private lateinit var ai2Value: TextView
+    private lateinit var matchValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -174,6 +175,10 @@ class MainActivity : Activity(), LillyBus.Ui {
             setPadding(dp(10), 0, 0, dp(6))
         })
 
+        val r0 = row(col)
+        matchValue = card(r0, "🔐", "Only my voice") { voiceMatchSetup() }
+        card(r0, "🧪", "Test voice match") { testVoiceMatch() }.text = "Say \"Lilly\" and see the score"
+
         val r1 = row(col)
         lockValue = card(r1, "🔒", "Lock screen call") { chooseLockMode() }
         card(r1, "🎙", "Choose voice") { chooseGeminiVoice() }
@@ -256,6 +261,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        matchValue.text = when {
+            VoiceMatch.active(this) -> "ON ✓ wakes only for you (" + VoiceMatch.level(this).replaceFirstChar { it.uppercase() } + ")"
+            VoiceMatch.voicePrint(this).ready -> "OFF — tap to turn on"
+            else -> "Tap to teach Lilly your voice"
+        }
         wakeValue.text = sensLabel(prefs.getString("wake_sens", "normal") ?: "normal")
         val helper = LillyAccess.enabled(this)
         spotifyValue.text = if (helper) "ON ✓ Spotify, WhatsApp send, speaker" else "OFF — tap to turn on"
@@ -1207,6 +1217,202 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "• App data backup is off"
             )
             .setPositiveButton("OK", null).show()
+    }
+
+    // ---------------- Voice match (sirf meri awaaz) ----------------
+
+    private fun pauseEngineMic(pause: Boolean) {
+        if (!LillyBus.running) return
+        try { LillyService.start(this, if (pause) LillyService.ACTION_PAUSE_MIC else LillyService.ACTION_RESUME_MIC) } catch (e: Exception) { }
+    }
+
+    private fun voiceMatchSetup() {
+        if (!hasMic()) { askPermissions(); return }
+        if (!VoiceMatch.modelReady(this)) {
+            AlertDialog.Builder(this).setTitle("🔐 Only my voice")
+                .setMessage(
+                    "Like Siri's Voice Match: Lilly will wake up only when YOU say \"Lilly\" — not for the TV, friends or family.\n\n" +
+                        "• One-time download (${VoiceMatch.MODEL_MB} MB), then works without internet\n" +
+                        "• You say \"Lilly\" 5 times to teach her your voice\n" +
+                        "• Your voice never leaves the phone\n" +
+                        "• She keeps learning your voice a little every time you use her"
+                )
+                .setPositiveButton("Download & start") { _, _ -> downloadVoiceMatch() }
+                .setNegativeButton("Not now", null).show()
+            return
+        }
+        val p = VoiceMatch.voicePrint(this)
+        if (!p.ready) { enrollVoice(); return }
+        val on = VoiceMatch.active(this)
+        val items = arrayOf(
+            if (on) "Turn OFF (wake for anyone)" else "Turn ON (wake only for me)",
+            "Strictness: " + VoiceMatch.level(this).replaceFirstChar { it.uppercase() },
+            "Test my voice",
+            "Teach my voice again",
+            "Delete my voice"
+        )
+        AlertDialog.Builder(this).setTitle("🔐 Only my voice")
+            .setItems(items) { _, w ->
+                when (w) {
+                    0 -> { VoiceMatch.setOn(this, !on); refreshCards(); pauseEngineMic(false) }
+                    1 -> chooseMatchLevel()
+                    2 -> testVoiceMatch()
+                    3 -> enrollVoice()
+                    else -> AlertDialog.Builder(this).setTitle("Delete your voice?")
+                        .setMessage("Lilly will wake up for anyone again.")
+                        .setPositiveButton("Delete") { _, _ -> VoiceMatch.reset(this); refreshCards() }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun chooseMatchLevel() {
+        val codes = arrayOf("relaxed", "normal", "strict")
+        val labels = arrayOf(
+            "Relaxed — rarely misses you, may sometimes wake for a similar voice",
+            "Normal (recommended)",
+            "Strict — never wakes for others, you may need to say \"Lilly\" twice sometimes"
+        )
+        AlertDialog.Builder(this).setTitle("How strict?")
+            .setSingleChoiceItems(labels, codes.indexOf(VoiceMatch.level(this)).coerceAtLeast(0)) { d, w ->
+                prefs.edit().putString("voice_match_level", codes[w]).apply()
+                refreshCards()
+                d.dismiss()
+            }.show()
+    }
+
+    private fun downloadVoiceMatch() {
+        val text = label("Starting…", 15f, Color.WHITE).apply { setPadding(dp(24), dp(12), dp(24), dp(4)) }
+        val d = AlertDialog.Builder(this).setTitle("Downloading voice match").setView(text)
+            .setCancelable(false).setNegativeButton("Hide", null).show()
+        VoiceMatch.download(this,
+            progress = { pct -> runOnUiThread { text.text = "$pct%  (about ${VoiceMatch.MODEL_MB} MB)" } },
+            done = { ok, err ->
+                runOnUiThread {
+                    try { d.dismiss() } catch (e: Exception) { }
+                    if (isFinishing) return@runOnUiThread
+                    if (ok) enrollVoice()
+                    else AlertDialog.Builder(this).setTitle("Download didn't finish ✗")
+                        .setMessage("Reason: $err\n\nCheck the internet and try again.")
+                        .setPositiveButton("Try again") { _, _ -> downloadVoiceMatch() }
+                        .setNegativeButton("Close", null).show()
+                }
+            })
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun recordClip(ms: Int): FloatArray {
+        val rate = 16000
+        val min = android.media.AudioRecord.getMinBufferSize(rate, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
+        val ar = android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION, rate,
+            android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate))
+        val total = rate * ms / 1000
+        val out = FloatArray(total)
+        val buf = ShortArray(rate / 10)
+        var got = 0
+        try {
+            ar.startRecording()
+            while (got < total) {
+                val n = ar.read(buf, 0, minOf(buf.size, total - got))
+                if (n <= 0) break
+                for (i in 0 until n) out[got + i] = buf[i] / 32768f
+                got += n
+            }
+        } finally {
+            try { ar.stop() } catch (e: Exception) { }
+            ar.release()
+        }
+        return if (got == total) out else out.copyOf(got)
+    }
+
+    private val enrollWords = listOf("Lilly", "Hey Lilly", "Lilly", "Hey Lilly", "Lilly")
+
+    /** 5 baar "Lilly" bulwa kar awaaz ki pehchaan banao */
+    private fun enrollVoice() {
+        if (!hasMic()) { askPermissions(); return }
+        pauseEngineMic(true)
+        val msg = label("", 17f, Color.WHITE).apply { setPadding(dp(24), dp(16), dp(24), dp(8)) }
+        val d = AlertDialog.Builder(this).setTitle("🔐 Teach Lilly your voice").setView(msg)
+            .setCancelable(false)
+            .setNegativeButton("Cancel", null).show()
+        val samples = ArrayList<FloatArray>()
+        var cancelled = false
+        d.setOnDismissListener { cancelled = true; if (!isFinishing && samples.size < 3) pauseEngineMic(false) }
+        fun step(i: Int, retry: Boolean) {
+            if (cancelled) return
+            if (i >= enrollWords.size) { d.setOnDismissListener(null); d.dismiss(); finishEnroll(samples); return }
+            msg.text = (if (retry) "Didn't catch that clearly — once more.\n\n" else "") +
+                "Step ${i + 1} of ${enrollWords.size}\n\nGet ready… say in your normal voice:\n\n🎙  \"${enrollWords[i]}\""
+            msg.postDelayed({
+                if (cancelled) return@postDelayed
+                msg.text = "Step ${i + 1} of ${enrollWords.size}\n\n🔴 Listening… say:  \"${enrollWords[i]}\""
+                Thread {
+                    val raw = try { recordClip(2200) } catch (e: Exception) { FloatArray(0) }
+                    val clip = VoiceMatch.trim(raw)
+                    val e = if (VoiceMatch.loudEnough(clip) || VoiceMatch.loudEnough(raw))
+                        VoiceMatch.embed(this, if (clip.size >= 12000) clip else raw) else null
+                    runOnUiThread {
+                        if (cancelled || isFinishing) return@runOnUiThread
+                        if (e == null) step(i, true)
+                        else { samples.add(e); step(i + 1, false) }
+                    }
+                }.start()
+            }, 1200)
+        }
+        step(0, false)
+    }
+
+    private fun finishEnroll(samples: List<FloatArray>) {
+        // Jo namoona baaki sab se mel nahi khaata (khaansi, shor) use hata do
+        val keep = samples.filter { a ->
+            val others = samples.filter { it !== a }
+            others.isEmpty() || others.map { VoicePrint.cosine(a, it) }.average() >= 0.25
+        }
+        if (keep.size < 3) {
+            pauseEngineMic(false)
+            AlertDialog.Builder(this).setTitle("Let's try again")
+                .setMessage("The recordings were too different from each other (noise or different voices). Find a quiet place and say \"Lilly\" in your normal voice.")
+                .setPositiveButton("Try again") { _, _ -> enrollVoice() }
+                .setNegativeButton("Close", null).show()
+            return
+        }
+        val p = VoicePrint(keep.toMutableList())
+        VoiceMatch.save(this, p)
+        VoiceMatch.setOn(this, true)
+        pauseEngineMic(false)
+        refreshCards()
+        AlertDialog.Builder(this).setTitle("Done ✓ Lilly knows your voice")
+            .setMessage("Now Lilly wakes up only when you say \"Lilly\".\n\nTry \"Test voice match\" to see your score, or ask someone else to say \"Lilly\" — she should stay quiet.\n\nIf she sometimes misses you, set Strictness to Relaxed. She also keeps learning your voice as you use her.")
+            .setPositiveButton("Test now") { _, _ -> testVoiceMatch() }
+            .setNegativeButton("OK", null).show()
+    }
+
+    private fun testVoiceMatch() {
+        if (!hasMic()) { askPermissions(); return }
+        val p = VoiceMatch.voicePrint(this)
+        if (!VoiceMatch.modelReady(this) || !p.ready) { voiceMatchSetup(); return }
+        pauseEngineMic(true)
+        val msg = label("Get ready… then say \"Lilly\"", 17f, Color.WHITE).apply { setPadding(dp(24), dp(16), dp(24), dp(8)) }
+        val d = AlertDialog.Builder(this).setTitle("🧪 Test voice match").setView(msg)
+            .setPositiveButton("Close", null).show()
+        d.setOnDismissListener { pauseEngineMic(false) }
+        msg.postDelayed({
+            msg.text = "🔴 Listening… say \"Lilly\""
+            Thread {
+                val raw = try { recordClip(2200) } catch (e: Exception) { FloatArray(0) }
+                val clip = VoiceMatch.trim(raw)
+                val e = if (VoiceMatch.loudEnough(raw)) VoiceMatch.embed(this, if (clip.size >= 12000) clip else raw) else null
+                runOnUiThread {
+                    if (isFinishing) return@runOnUiThread
+                    if (e == null) { msg.text = "Didn't hear anything clearly. Close and try again."; return@runOnUiThread }
+                    val sc = p.score(e)
+                    val need = VoicePrint.threshold(VoiceMatch.level(this))
+                    msg.text = "Match: ${(sc * 100).toInt()}%   (needs ${(need * 100).toInt()}%)\n\n" +
+                        if (sc >= need) "✓ That's you — Lilly will wake up." else "✗ Lilly would NOT wake up for this voice."
+                }
+            }.start()
+        }, 1200)
     }
 
     private fun sendToEngine(action: String) {
