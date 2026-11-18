@@ -721,7 +721,24 @@ class LillyService : Service() {
             unmuteSoon(450)
             when (mode) {
                 Mode.COMMAND ->
-                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                    if (brain.awaitingChoice() && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                        // "Kaun sa?" poochha hai: aap list padh rahe ho — chup rehne par so mat jaao
+                        choiceWaits++
+                        LillyBus.ui?.keepAlive()
+                        when {
+                            choiceWaits == 2 -> {
+                                val r = brain.choicePrompt()
+                                sayBi(r.display, r.spoken) { listen(Mode.COMMAND) }
+                            }
+                            choiceWaits <= 4 -> listen(Mode.COMMAND)
+                            else -> {
+                                brain.cancelChoice()
+                                sayBi("Okay, call me again when you're ready", "ठीक है, जब चाहिए तब बुला लेना") {
+                                    endSession(); listen(Mode.WAKE)
+                                }
+                            }
+                        }
+                    } else if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                         if (followUp || (wokeByVoice && !heardAny)) {
                             // Baat khatam / galti se jaagi thi aur kisi ne kuch nahi bola: chupchaap wapas
                             followUp = false
@@ -750,6 +767,7 @@ class LillyService : Service() {
 
         override fun onResults(results: Bundle?) {
             lastEvent = System.currentTimeMillis()
+            choiceWaits = 0
             unmuteSoon(450)
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
             handleResults(list)
@@ -786,12 +804,15 @@ class LillyService : Service() {
     /** Siri jaisa: chhoti si "ting", orb chamakta hai aur turant sunna shuru */
     /** Awaaz se jaagi (tap se nahi) — kuch na suna toh chupchaap so jaao */
     private var wokeByVoice = false
+    /** "Kaun sa?" ke baad kitni baar chup raha */
+    private var choiceWaits = 0
     private var heardAny = false
 
     private fun activate(fromTap: Boolean) {
         if (mode == Mode.SPEAKING || mode == Mode.COMMAND) return
         wokeByVoice = !fromTap
         heardAny = false
+        choiceWaits = 0
         stopVosk()
         LillyBus.heard("")
         if (!fromTap) showOverlay()
@@ -876,7 +897,7 @@ class LillyService : Service() {
 
     /** Jawab bolo, phir kaam karo (call, app, gaana…) */
     private fun deliver(reply: LillyBrain.Reply) {
-        sayBi(reply.display, reply.spoken) {
+        val then = {
             if (reply.endChat || reply.action != null) {
                 endSession()
                 reply.action?.invoke()
@@ -887,6 +908,9 @@ class LillyService : Service() {
                 continueChat()
             }
         }
+        // English me chhota bolne wala roop ho (lambi list screen par, bolna chhota)
+        val en = reply.spokenEn
+        if (english && en != null) say(reply.display, en, then) else sayBi(reply.display, reply.spoken, then)
     }
 
     private fun continueChat() {

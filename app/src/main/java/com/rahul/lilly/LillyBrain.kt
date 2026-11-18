@@ -40,7 +40,9 @@ class LillyBrain(private val ctx: Context) {
         val askAi: String? = null,
         val endChat: Boolean = false,
         /** Kaam nahi hua (naam/app nahi mila, samajh nahi aaya) — seekhne ke liye */
-        val failed: Boolean = false
+        val failed: Boolean = false,
+        /** English me bolne ke liye chhota roop (display lamba ho tab) */
+        val spokenEn: String? = null
     )
 
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
@@ -55,9 +57,25 @@ class LillyBrain(private val ctx: Context) {
     /** "Kaun sa number?" poochha hai aur jawab ka intezaar hai */
     private class PendingCall(
         val target: String, val options: List<CallChoice.Phone>, val byName: Boolean,
-        val speaker: Boolean, val favOnly: Boolean, val at: Long, var asked: Int = 0
+        val speaker: Boolean, val favOnly: Boolean, var at: Long, var asked: Int = 0, var page: Int = 0
     )
     private var pendingCall: PendingCall? = null
+
+    /** "Kaun sa?" poochh kar jawab ka intezaar — service chup rehne par session band nahi karegi */
+    fun awaitingChoice(): Boolean {
+        val pc = pendingCall ?: return false
+        return System.currentTimeMillis() - pc.at < 90_000
+    }
+
+    fun cancelChoice() { pendingCall = null }
+
+    /** Chup rehne par halka sa yaad dilana */
+    fun choicePrompt(): Reply {
+        val pc = pendingCall
+        val more = pc != null && pc.byName && (pc.page + 1) * PAGE < pc.options.size
+        return if (more) Reply("Say a number, or say more", "नंबर बोलिए, या 'और' बोलिए", endChat = false)
+        else Reply("Say a number, or the name", "नंबर या नाम बोलिए", endChat = false)
+    }
 
     /** Lilly ki seekh (phone par hi save) */
     val learner = Learner(
@@ -287,6 +305,8 @@ class LillyBrain(private val ctx: Context) {
         return askChoice(pc)
     }
 
+    private val PAGE = 5
+
     private val ordinalHi = listOf("पहला", "दूसरा", "तीसरा", "चौथा", "पाँचवाँ")
     private val ordinalEn = listOf("first", "second", "third", "fourth", "fifth")
 
@@ -294,25 +314,33 @@ class LillyBrain(private val ctx: Context) {
     private fun askChoice(pc: PendingCall): Reply {
         val o = pc.options
         if (pc.byName) {
-            val shown = o.take(10)
-            val lines = shown.mapIndexed { i, p -> "${i + 1}. ${p.name}" }.joinToString("\n")
-            val more = if (o.size > shown.size) "\n…and ${o.size - shown.size} more" else ""
-            val who = pc.target.replaceFirstChar { it.uppercase() }
-            val names = o.map { CallChoice.speakName(it.name) }
+            val who = CallChoice.speakName(pc.target).replaceFirstChar { it.uppercase() }
             if (o.size <= 3) {
+                val lines = o.mapIndexed { i, p -> "${i + 1}. ${p.name}" }.joinToString("\n")
+                val names = o.map { CallChoice.speakName(it.name) }
                 return Reply(
                     "I found ${o.size} contacts for “$who”:\n$lines\nWhich one?",
                     "${o.size} कॉन्टैक्ट मिले: " + names.joinToString(", या ") + "। किसको कॉल करूँ?",
                     endChat = false
                 )
             }
-            // Bahut saare: sab bolna lamba hoga — screen par list, bolo sirf kuch naam
-            val ex = names.take(3)
+            // Bahut saare: 5-5 karke. "more" / "aur" bolne par agle 5
+            val from = pc.page * PAGE
+            val page = o.subList(from, minOf(from + PAGE, o.size))
+            val short = CallChoice.shortNames(o)
+            val lines = page.indices.joinToString("\n") { i -> "${from + i + 1}. ${page[i].name}" }
+            val spokenList = page.indices.joinToString(". ") { i -> "${from + i + 1}, ${short[from + i]}" }
+            val left = o.size - (from + page.size)
+            val head = if (pc.page == 0) "I found ${o.size} contacts named $who. " else ""
+            val headHi = if (pc.page == 0) "$who नाम के ${o.size} कॉन्टैक्ट हैं। " else ""
+            val tail = if (left > 0) "Say a number, or say more." else "Say a number."
+            val tailHi = if (left > 0) "नंबर बोलिए, या 'और' बोलिए।" else "नंबर बोलिए।"
+            val moreLine = if (left > 0) "\n…$left more — say “more”" else ""
             return Reply(
-                "I found ${o.size} contacts named “$who”. Which one?\n$lines$more\n" +
-                    "Say the second name (like “${ex[1].substringAfter(' ', ex[1])}”) or a number.",
-                "$who नाम के ${o.size} कॉन्टैक्ट हैं। कौन सा? जैसे ${ex[0]}, ${ex[1]}, या ${ex[2]}। दूसरा नाम बोलिए।",
-                endChat = false
+                "$head\n$lines$moreLine\n$tail".trim(),
+                "$headHi$spokenList। $tailHi",
+                endChat = false,
+                spokenEn = "$head$spokenList. $tail"
             )
         }
         val name = o.first().name
@@ -339,9 +367,18 @@ class LillyBrain(private val ctx: Context) {
         val pc = pendingCall ?: return null
         if (System.currentTimeMillis() - pc.at > 60_000) { pendingCall = null; return null }
         val ans = heard.first()
+        pc.at = System.currentTimeMillis()
         if (CallChoice.isCancel(ans)) {
             pendingCall = null
             return Reply("Okay, I won't call", "ठीक है, कॉल नहीं करती", endChat = true)
+        }
+        // "more" / "aur batao" — agle 5 naam
+        if (pc.byName && heard.any { CallChoice.isMore(it) }) {
+            if ((pc.page + 1) * PAGE < pc.options.size) {
+                pc.page++
+                return askChoice(pc)
+            }
+            return Reply("That's all of them. Say a number.", "बस इतने ही हैं। नंबर बोलिए।", endChat = false)
         }
         val idx = heard.firstNotNullOfOrNull { CallChoice.pick(it, pc.options, pc.byName) }
         if (idx != null) {
@@ -354,7 +391,7 @@ class LillyBrain(private val ctx: Context) {
         // Koi nayi command boli ("time kya hua") toh wahi karo
         val cmd = Parser.parse(learner.rewrite(ans) ?: ans)
         if (cmd !is Cmd.Unknown && cmd !is Cmd.Chat) { pendingCall = null; return null }
-        if (pc.asked < 1) {
+        if (pc.asked < 2) {
             pc.asked++
             val r = askChoice(pc)
             val hint = if (pc.byName) "Say the name, or first / second." else "Say first, second, or the last digits."

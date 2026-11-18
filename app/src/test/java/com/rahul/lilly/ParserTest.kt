@@ -480,3 +480,36 @@ class ManyContactsTest {
         assertEquals(null, pick("pata nahi yaar"))
     }
 }
+
+class SplitNameAndPagingTest {
+    private val names = listOf(
+        "Abhishek 🔫🔫", "Abhishek Badiyasar", "Abhishek Badiysar", "Abhishek Balesra", "Abhishek Bhaiya",
+        "Abhishek Bhaiya Hf", "Abhishek Bpt Vgu", "Abhishek Friend", "Abhishek Ji", "Abhishek Jitu",
+        "Abhishek Moraya", "Abhishek New", "Abhishek Sain", "Abhishek Shrimal Plot", "Abhishek Vgu",
+        "Dr. Abhishek Bhaiya"
+    )
+
+    @Test fun splitWordsStillMatch() {
+        // Google likhta hai "abhishek badiya sar"
+        assertEquals(listOf("Abhishek Badiyasar"), CallChoice.candidates(listOf("abhishek badiya sar"), names))
+        assertEquals(listOf("Abhishek Badiyasar"), CallChoice.candidates(listOf("Call Abhishek Badiyasar".removePrefix("Call ")), names))
+        assertEquals(listOf("Abhishek Shrimal Plot"), CallChoice.candidates(listOf("abhishek shrimal plot"), names))
+        assertEquals(Cmd.Call("abhishek badiya sar"), Parser.parse("call Abhishek badiya sar"))
+        val opts = CallChoice.candidates(listOf("abhishek"), names).map { CallChoice.Phone(it, "9876543210", "") }
+        assertEquals("Abhishek Badiyasar", CallChoice.pick("badiya sar", opts, true)?.let { opts[it].name })
+    }
+
+    @Test fun moreAndShortNames() {
+        assertTrue(CallChoice.isMore("more"))
+        assertTrue(CallChoice.isMore("aur batao"))
+        assertTrue(CallChoice.isMore("aage"))
+        assertTrue(CallChoice.isMore("और"))
+        assertTrue(!CallChoice.isMore("badiyasar"))
+        val opts = names.map { CallChoice.Phone(it, "1", "") }
+        val short = CallChoice.shortNames(opts)
+        assertEquals("Abhishek", short[0])
+        assertEquals("Badiyasar", short[1])
+        assertEquals("Shrimal Plot", short[13])
+        assertEquals("Dr. Bhaiya", short[15])
+    }
+}

@@ -53,9 +53,9 @@ object CallChoice {
         val best = scores.values.maxOrNull() ?: 0
         if (best < 30) return emptyList()
         val multiWord = Parser.normName(targets.first()).split(" ").size >= 2
-        val pool = if (best >= 99 && multiWord) {
-            // Poora naam bilkul mila
-            scores.filter { it.value >= 99 }.keys
+        val pool = if (best >= 95 && multiWord) {
+            // Poora naam mila ("abhishek badiya sar" = "Abhishek Badiyasar")
+            scores.filter { it.value >= best - 2 }.keys
         } else {
             // Jis-jis naam me bola gaya shabd hai (75+), warna sirf barabar wale
             scores.filter { it.value >= minOf(best, 75) }.keys
@@ -91,8 +91,10 @@ object CallChoice {
 
     /** Naam se chunna: "bhaiya" -> "Abhishek Bhaiya" (na ki "Bhaiya Hf" / "Dr. … Bhaiya") */
     private fun pickByName(answerWords: List<String>, options: List<Phone>): Int? {
-        val said = answerWords.filter { it !in fillerWords }
-        if (said.isEmpty()) return null
+        val plain = answerWords.filter { it !in fillerWords }
+        if (plain.isEmpty()) return null
+        // "badiya sar" -> "badiyasar" bhi try karo
+        val said = plain + plain.zipWithNext { a, b -> a + b }
         val nameWords = options.map { Parser.normName(it.name).split(" ").filter { w -> w.isNotBlank() } }
         // Jo shabd sab naamon me hai ("abhishek") wo farak nahi batata
         val shared = nameWords.reduce { a, b -> a.filter { it in b } }.toSet()
@@ -189,6 +191,24 @@ object CallChoice {
         }
         return null
     }
+
+    /** Naam ka sirf alag hissa bolne ke liye: "Abhishek Badiyasar" -> "Badiyasar" (sab me "Abhishek" hai) */
+    fun shortNames(options: List<Phone>): List<String> {
+        val words = options.map { Parser.normName(speakName(it.name)).split(" ").filter { w -> w.isNotBlank() } }
+        val shared = if (words.size < 2) emptySet() else words.reduce { a, b -> a.filter { it in b } }.toSet()
+        return options.map { o ->
+            val parts = speakName(o.name).split(" ").filter { it.isNotBlank() && Parser.normName(it) !in shared }
+            if (parts.isEmpty()) speakName(o.name) else parts.joinToString(" ")
+        }
+    }
+
+    private val moreRe = Regex(
+        """^(more|aur|aur batao|aur bolo|aur sunao|aur naam|aage|aage batao|next|next page|show more|tell me more|""" +
+            """and more|baaki|baki|baaki batao|baki batao|aur dikhao|more names|any more|aur hai|aur kaun)$"""
+    )
+
+    /** "more" / "aur batao" — agle 5 naam */
+    fun isMore(answerRaw: String): Boolean = moreRe.matches(Parser.normalize(answerRaw))
 
     private val cancelRe = Regex(
         """^(cancel|no|nahi|nahin|mat karo|rehne do|rahne do|chhodo|chodo|koi nahi|kisi ko nahi|never ?mind|leave it|stop|bas)$"""

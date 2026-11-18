@@ -207,8 +207,14 @@ object Parser {
         if (q.isBlank() || n.isBlank()) return 0
         val words = n.split(" ")
         val qWords = q.split(" ")
+        // Google naam tod deta hai: "badiya sar" = "badiyasar"
+        val qj = q.replace(" ", "")
+        val nj = n.replace(" ", "")
         return when {
             n == q -> 100
+            qj == nj -> 98
+            qj.length >= 8 && levenshtein(qj, nj) <= 1 -> 92
+            qj.length >= 6 && nj.startsWith(qj) && qWords.size >= 2 -> 86
             n.startsWith("$q ") -> 90
             words.any { it == q } -> 80
             qWords.all { qw -> words.any { it == qw } } -> 75
