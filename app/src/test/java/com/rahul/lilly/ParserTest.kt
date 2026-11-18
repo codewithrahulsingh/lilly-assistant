@@ -311,3 +311,130 @@ class LearnerTest {
         assertEquals(0, learner().items().size)
     }
 }
+
+class WakeAndCallTest {
+    private fun p(s: String) = Parser.parse(s)
+
+    @Test fun noFalseWakeFromHindi() {
+        assertTrue(!Parser.hasWakeWord("maine kal naya phone le li"))
+        assertTrue(!Parser.hasWakeWord("usne chai le li"))
+        assertTrue(Parser.hasWakeWord("hey lilly open youtube"))
+        assertTrue(Parser.startsWithWake("Lilly call Rohit"))
+        assertTrue(Parser.startsWithWake("hey lily time kya hai"))
+        assertTrue(!Parser.startsWithWake("kal maine bagiche me lily ke phool dekhe"))
+    }
+
+    @Test fun wakeConfidence() {
+        fun j(vararg w: Pair<String, Double>) =
+            "{\"result\":[" + w.joinToString(",") { "{\"conf\":${it.second},\"end\":1.0,\"start\":0.5,\"word\":\"${it.first}\"}" } +
+                "],\"text\":\"" + w.joinToString(" ") { it.first } + "\"}"
+        // Saaf "Hey Lilly"
+        assertTrue(WakeCheck.accept(j("hey" to 0.9, "lily" to 0.95), "normal"))
+        assertTrue(WakeCheck.accept(j("hey" to 0.9, "lily" to 0.95), "low"))
+        // Akela "lily" — bahut saaf ho tabhi
+        assertTrue(WakeCheck.accept(j("lily" to 0.97), "normal"))
+        assertTrue(!WakeCheck.accept(j("lily" to 0.7), "normal"))
+        assertTrue(!WakeCheck.accept(j("lily" to 0.97), "low"))
+        assertTrue(WakeCheck.accept(j("lily" to 0.7), "high"))
+        // TV / lambi baat-cheet ke beech
+        assertTrue(!WakeCheck.accept(j("[unk]" to 1.0, "hi" to 0.6, "[unk]" to 1.0, "lily" to 0.8, "[unk]" to 1.0), "normal"))
+        assertTrue(!WakeCheck.accept(j("hello" to 0.9, "[unk]" to 1.0), "normal"))
+        // Shabd-wise jaankari na ho
+        assertTrue(WakeCheck.accept("{\"text\":\"hey lily\"}", "normal"))
+        assertTrue(!WakeCheck.accept("{\"text\":\"\"}", "normal"))
+    }
+
+    @Test fun speakerCalls() {
+        assertEquals(Cmd.Call("rohit", speaker = true), p("call Rohit on speaker"))
+        assertEquals(Cmd.Call("rohit", speaker = true), p("Call Rohit on speakerphone"))
+        assertEquals(Cmd.Call("rohit", speaker = true), p("Rohit ko speaker pe call karo"))
+        assertEquals(Cmd.Call("mummy", speaker = true), p("mummy ko call karo speaker par"))
+        assertEquals(Cmd.Call("papa", speaker = true), p("papa ko speaker on karke call karo"))
+        assertEquals(Cmd.Call("rohit", speaker = true), p("रोहित को स्पीकर पर कॉल करो"))
+        assertEquals(Cmd.Call("rohit", speaker = false), p("call Rohit"))
+    }
+
+    @Test fun numberChoice() {
+        val nums = listOf(
+            CallChoice.Phone("Rohit Sharma", "+91 98765 43210", "Mobile"),
+            CallChoice.Phone("Rohit Sharma", "0141 222 3345", "Work"),
+            CallChoice.Phone("Rohit Sharma", "+91 99887 76612", "Home")
+        )
+        assertEquals(0, CallChoice.pick("pehla", nums, false))
+        assertEquals(1, CallChoice.pick("second one", nums, false))
+        assertEquals(1, CallChoice.pick("doosre wale pe", nums, false))
+        assertEquals(2, CallChoice.pick("last", nums, false))
+        assertEquals(0, CallChoice.pick("mobile wala", nums, false))
+        assertEquals(1, CallChoice.pick("office number", nums, false))
+        assertEquals(2, CallChoice.pick("ghar wala", nums, false))
+        assertEquals(1, CallChoice.pick("jo 3345 pe khatam hota hai", nums, false))
+        assertEquals(2, CallChoice.pick("ending 12", nums, false))
+        assertEquals(0, CallChoice.pick("1", nums, false))
+        assertEquals(null, CallChoice.pick("pata nahi", nums, false))
+        assertEquals(null, CallChoice.pick("rohit ko call kar do yaar", nums, false))
+        assertTrue(CallChoice.isCancel("rehne do"))
+        assertTrue(CallChoice.isCancel("cancel"))
+    }
+
+    @Test fun nameChoiceAndDedupe() {
+        val names = listOf(
+            CallChoice.Phone("Rohit Sharma", "1", ""), CallChoice.Phone("Rohit Gupta", "2", "")
+        )
+        assertEquals(1, CallChoice.pick("Gupta", names, true))
+        assertEquals(0, CallChoice.pick("rohit sharma wala", names, true))
+        assertEquals(1, CallChoice.pick("doosra", names, true))
+        val d = CallChoice.dedupe(
+            listOf(
+                CallChoice.Phone("A", "+91 98765 43210", ""),
+                CallChoice.Phone("A", "09876543210", "Mobile"),
+                CallChoice.Phone("A", "98765-43211", "Work")
+            )
+        )
+        assertEquals(2, d.size)
+        assertEquals("Mobile", d[0].label)
+    }
+}
+
+class MemoryTest {
+    private var stored: String? = null
+    private var now = 1_000_000L
+    private fun mem() = Memory({ stored }, { stored = it }, { now })
+    private fun p(s: String) = Parser.parse(s)
+
+    @Test fun parseMemoryCommands() {
+        assertEquals(Cmd.Remember("my gym is at 6 pm"), p("Remember that my gym is at 6 pm"))
+        assertEquals(Cmd.Remember("mera gym 6 baje hai"), p("yaad rakhna ki mera gym 6 baje hai"))
+        assertEquals(Cmd.Remember("mummy ka birthday 12 june ko hai"), p("mummy ka birthday 12 june ko hai ye yaad rakhna"))
+        assertEquals(Cmd.ForgetFact("my gym timing"), p("forget my gym timing"))
+        assertEquals(Cmd.ForgetFact("gym wali baat"), p("bhool jao ki gym wali baat"))
+        assertEquals(Cmd.Recall, p("what do you remember about me"))
+        assertEquals(Cmd.Recall, p("mere baare mein kya yaad hai"))
+        assertEquals(Cmd.Chat("bye"), p("never mind"))
+        assertTrue(p("forget it") !is Cmd.ForgetFact)
+    }
+
+    @Test fun factsSaveAndForget() {
+        val m = mem()
+        assertTrue(m.remember("My gym is at 6 pm"))
+        assertTrue(!m.remember("my gym is at 6 pm."))
+        assertTrue(m.remember("Mummy's birthday is on 12 June"))
+        assertEquals(2, mem().facts().size)
+        assertTrue(mem().factsForPrompt().contains("- My gym is at 6 pm"))
+        val m2 = mem()
+        assertEquals(1, m2.forgetMatching("gym timing 6 pm"))
+        assertEquals(1, mem().facts().size)
+    }
+
+    @Test fun answerCache() {
+        val m = mem()
+        assertTrue(m.isCacheable("what is the capital of japan"))
+        assertTrue(!m.isCacheable("what is the weather today"))
+        assertTrue(!m.isCacheable("aaj ki khabar kya hai"))
+        assertTrue(!m.isCacheable("hello"))
+        m.cacheAnswer("What is the capital of Japan?", "Tokyo.", "Tokyo.", english = true)
+        assertEquals("Tokyo.", mem().cachedAnswer("what is the capital of japan", true)?.spoken)
+        assertEquals(null, mem().cachedAnswer("what is the capital of japan", false))
+        now += 40L * 24 * 60 * 60 * 1000
+        assertEquals(null, mem().cachedAnswer("what is the capital of japan", true))
+    }
+}

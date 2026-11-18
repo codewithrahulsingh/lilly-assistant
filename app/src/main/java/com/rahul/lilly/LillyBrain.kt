@@ -9,6 +9,9 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
+import android.os.Build
+import android.os.Bundle
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Handler
@@ -40,10 +43,21 @@ class LillyBrain(private val ctx: Context) {
         val failed: Boolean = false
     )
 
-    private data class Contact(val name: String, val number: String)
-
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
     private val audio get() = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    /** Lilly ki yaaddasht: aapke baare me baatein + purane jawab (phone par hi save) */
+    val memory = Memory(
+        load = { prefs.getString("memory", null) },
+        save = { prefs.edit().putString("memory", it).apply() }
+    )
+
+    /** "Kaun sa number?" poochha hai aur jawab ka intezaar hai */
+    private class PendingCall(
+        val target: String, val options: List<CallChoice.Phone>, val byName: Boolean,
+        val speaker: Boolean, val favOnly: Boolean, val at: Long, var asked: Int = 0
+    )
+    private var pendingCall: PendingCall? = null
 
     /** Lilly ki seekh (phone par hi save) */
     val learner = Learner(
@@ -67,11 +81,13 @@ class LillyBrain(private val ctx: Context) {
 
     fun handle(rawText: String, alternatives: List<String>, allowAi: Boolean = true): Reply {
         learner.reload() // app ki screen se kuch bhulaya gaya ho toh
+        memory.reload()
         // Pehla = sabse pakka; baaki Google ke doosre andaze (galat sune naam pakadne ke liye)
         val heard = (listOf(rawText) + alternatives)
             .map { Parser.stripWakeWord(Parser.roman(it)) }
             .filter { it.isNotBlank() }.distinct()
         if (heard.isEmpty()) return Reply("Sorry, I didn't get that", "कुछ समझ नहीं आया", endChat = true, failed = true)
+        answerPendingCall(heard)?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
         val reply = decide(texts, allowAi)
@@ -98,7 +114,16 @@ class LillyBrain(private val ctx: Context) {
         } ?: top
 
         return when (main) {
-            is Cmd.Call -> callReply(cmds.filterIsInstance<Cmd.Call>().map { it.target }.distinct())
+            is Cmd.Call -> callReply(cmds.filterIsInstance<Cmd.Call>().map { it.target }.distinct(), main.speaker)
+            is Cmd.Remember -> {
+                if (memory.remember(main.fact)) Reply("Okay, I'll remember: ${main.fact}", "ठीक है, याद रख लिया", endChat = true)
+                else Reply("I already remember that", "ये मुझे पहले से याद है", endChat = true)
+            }
+            is Cmd.ForgetFact -> {
+                if (memory.forgetMatching(main.what) > 0) Reply("Done, I've forgotten that", "ठीक है, भूल गई", endChat = true)
+                else Reply("I don't have anything like that saved", "ऐसी कोई बात मुझे याद नहीं है", endChat = true)
+            }
+            Cmd.Recall -> recallReply()
             is Cmd.OpenApp -> openApp(cmds.filterIsInstance<Cmd.OpenApp>().map { it.name }.distinct(), main.orMusic)
             is Cmd.PlayMusic -> playMusic(main.query, main.app)
             is Cmd.Media -> mediaReply(main.action)
@@ -110,7 +135,10 @@ class LillyBrain(private val ctx: Context) {
             is Cmd.Chat -> chatReply(main.topic)
             is Cmd.Teach -> teachReply(main)
             is Cmd.Unknown -> {
-                if (allowAi && hasAiKey()) Reply("Thinking…", "", askAi = texts.first())
+                // Ye sawaal pehle poochha tha? Saved jawab turant (bina internet, bina limit)
+                val cached = if (allowAi) memory.cachedAnswer(texts.first(), Parser.isEnglish(texts.first())) else null
+                if (cached != null) Reply(cached.display, cached.spoken)
+                else if (allowAi && hasAiKey()) Reply("Thinking…", "", askAi = texts.first())
                 else Reply(
                     if (allowAi) "I can't do that yet. Turn on AI chat in the Lilly app and I can answer anything"
                     else "I understood, but I couldn't do that on the phone",
@@ -119,6 +147,24 @@ class LillyBrain(private val ctx: Context) {
                 )
             }
         }
+    }
+
+    // ---------- Yaaddasht ----------
+
+    private fun recallReply(): Reply {
+        val f = memory.facts()
+        if (f.isEmpty()) return Reply(
+            "I don't have anything saved about you yet. Say: remember that…",
+            "अभी आपके बारे में कुछ याद नहीं है। ऐसे बोलिए: याद रखना कि…", endChat = true
+        )
+        val top = f.takeLast(5).reversed()
+        val list = top.joinToString("\n") { "• ${it.text}" }
+        val more = if (f.size > 5) "\n…and ${f.size - 5} more in the Lilly app" else ""
+        return Reply(
+            "Here's what I remember:\n$list$more",
+            "मुझे ये याद है: " + top.joinToString("। ") { it.text },
+            endChat = true
+        )
     }
 
     // ---------- Sikhana ----------
@@ -176,7 +222,8 @@ class LillyBrain(private val ctx: Context) {
     private fun granted(p: String) =
         ctx.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
-    private fun callReply(targets: List<String>): Reply {
+    private fun callReply(targets: List<String>, speaker: Boolean): Reply {
+        pendingCall = null
         val target = targets.first()
 
         // ---- Lock screen security ----
@@ -189,6 +236,8 @@ class LillyBrain(private val ctx: Context) {
             )
         }
         val favOnly = locked && lockMode == "fav"
+        val onSpk = if (speaker) " on speaker" else ""
+        val onSpkHi = if (speaker) " स्पीकर पर" else ""
 
         val digits = target.filter { it.isDigit() || it == '+' }
         if (digits.count { it.isDigit() } >= 5 && target.count { it.isLetter() } == 0) {
@@ -196,7 +245,7 @@ class LillyBrain(private val ctx: Context) {
                 "I can't dial a spoken number on the lock screen. Please unlock your phone",
                 "लॉक स्क्रीन पर नंबर बोलकर कॉल नहीं होती, फ़ोन अनलॉक कीजिए", endChat = true
             )
-            return Reply("Calling $digits", "$digits पर कॉल कर रही हूँ", { startCall(digits) }, endChat = true)
+            return Reply("Calling $digits$onSpk", "$digits पर$onSpkHi कॉल कर रही हूँ", { startCall(digits, speaker) }, endChat = true)
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
             return Reply(
@@ -204,74 +253,218 @@ class LillyBrain(private val ctx: Context) {
                 { openAppSettings() }, endChat = true
             )
         }
-        // Pehle se seekha hua naam ("mummy" -> "Mummy Jio") sabse aage
+        val rows = loadPhones(favOnly)
+        val notFound = if (favOnly) Reply(
+            "On the lock screen I can only call your favourite contacts. $target is not in favourites",
+            "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला", endChat = true
+        ) else Reply("I couldn't find a contact named $target", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true, failed = true)
+        if (rows.isEmpty()) return notFound
+
+        // Pehle se seekha hua naam ("rohit" -> "Rohit Sharma", 2+ baar chuna gaya)
         val learned = targets.firstNotNullOfOrNull { learner.contactFor(it) }
-        val queries = if (learned != null) listOf(learned) + targets else targets
-        val c = findContact(queries, favOnly)
-            ?: return if (favOnly) Reply(
-                "On the lock screen I can only call your favourite contacts. $target is not in favourites",
-                "लॉक स्क्रीन पर सिर्फ़ फ़ेवरेट कॉन्टैक्ट्स को कॉल होती है। $target फ़ेवरेट में नहीं मिला", endChat = true
-            ) else Reply("I couldn't find a contact named $target", "$target नाम का कॉन्टैक्ट नहीं मिला", endChat = true, failed = true)
-        return Reply("Calling ${c.name}", "${c.name} को कॉल कर रही हूँ", {
-            learner.rememberContact(target, c.name)
-            startCall(c.number)
+        if (learned != null && rows.any { it.name == learned }) return callByName(target, learned, rows, speaker, favOnly)
+
+        // Har naam ka sabse achha score
+        val scores = LinkedHashMap<String, Int>()
+        for ((qi, q) in targets.withIndex()) {
+            for (name in rows.map { it.name }.distinct()) {
+                val base = Parser.contactScore(q, name)
+                if (base <= 0) continue
+                val sc = base - qi
+                if (sc > (scores[name] ?: 0)) scores[name] = sc
+            }
+        }
+        val best = scores.values.maxOrNull() ?: 0
+        if (best < 30) return notFound
+        // Barabar ke match: "Rohit" -> Rohit Sharma, Rohit Gupta  => poochho
+        val tied = scores.filter { it.value == best }.keys
+            .sortedByDescending { learner.contactBonus(it) }.take(4)
+        if (tied.size == 1) return callByName(target, tied[0], rows, speaker, favOnly)
+
+        val options = tied.map { n -> rows.first { it.name == n } }
+        val pc = PendingCall(target, options, byName = true, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis())
+        pendingCall = pc
+        return askChoice(pc)
+    }
+
+    private fun callByName(target: String, name: String, rows: List<CallChoice.Phone>, speaker: Boolean, favOnly: Boolean): Reply {
+        val nums = CallChoice.dedupe(rows.filter { it.name == name })
+        if (nums.size == 1) return callNumber(target, nums[0], speaker, chosen = false)
+        // Pehle kai baar chuna hua number
+        learner.numberFor(name)?.let { known ->
+            nums.firstOrNull { CallChoice.digitsKey(it.number) == known }?.let { return callNumber(target, it, speaker, chosen = false) }
+        }
+        val pc = PendingCall(target, nums.take(5), byName = false, speaker = speaker, favOnly = favOnly, at = System.currentTimeMillis())
+        pendingCall = pc
+        return askChoice(pc)
+    }
+
+    private val ordinalHi = listOf("पहला", "दूसरा", "तीसरा", "चौथा", "पाँचवाँ")
+    private val ordinalEn = listOf("first", "second", "third", "fourth", "fifth")
+
+    /** Siri jaisa: screen par list, aur bol kar poochho */
+    private fun askChoice(pc: PendingCall): Reply {
+        val o = pc.options
+        if (pc.byName) {
+            val lines = o.mapIndexed { i, p -> "${i + 1}. ${p.name}" }.joinToString("\n")
+            return Reply(
+                "I found ${o.size} contacts for “${pc.target}”:\n$lines\nWhich one?",
+                "${o.size} कॉन्टैक्ट मिले: " + o.joinToString(", या ") { it.name } + "। किसको कॉल करूँ?",
+                endChat = false
+            )
+        }
+        val name = o.first().name
+        val lines = o.mapIndexed { i, p -> CallChoice.numberLine(i, p) }.joinToString("\n")
+        // Do number ka label same ho ("Mobile", "Mobile") toh aakhri ank bhi bolo
+        val sameLabels = o.map { it.label.lowercase() }.distinct().size < o.size
+        fun spokenOpt(i: Int, p: CallChoice.Phone, hi: Boolean): String {
+            val ord = if (hi) ordinalHi.getOrElse(i) { "${i + 1}" } else ordinalEn.getOrElse(i) { "${i + 1}" }
+            val end = CallChoice.lastDigits(p.number).toCharArray().joinToString(" ")
+            val lab = p.label.ifBlank { "number" }
+            return if (sameLabels || p.label.isBlank()) {
+                if (hi) "$ord $lab, जो $end पर खत्म होता है" else "$ord, $lab ending $end"
+            } else "$ord $lab"
+        }
+        return Reply(
+            "$name has ${o.size} numbers:\n$lines\nWhich one?",
+            "$name के ${o.size} नंबर हैं: " + o.mapIndexed { i, p -> spokenOpt(i, p, true) }.joinToString(", ") + "। किस पर कॉल करूँ?",
+            endChat = false
+        )
+    }
+
+    /** "Kaun sa?" ka jawab aaya ho toh wahi sambhalo; nahi toh null (normal command) */
+    private fun answerPendingCall(heard: List<String>): Reply? {
+        val pc = pendingCall ?: return null
+        if (System.currentTimeMillis() - pc.at > 60_000) { pendingCall = null; return null }
+        val ans = heard.first()
+        if (CallChoice.isCancel(ans)) {
+            pendingCall = null
+            return Reply("Okay, I won't call", "ठीक है, कॉल नहीं करती", endChat = true)
+        }
+        val idx = heard.firstNotNullOfOrNull { CallChoice.pick(it, pc.options, pc.byName) }
+        if (idx != null) {
+            pendingCall = null
+            val chosen = pc.options[idx]
+            return if (pc.byName) {
+                callByName(pc.target, chosen.name, loadPhones(pc.favOnly), pc.speaker, pc.favOnly)
+            } else callNumber(pc.target, chosen, pc.speaker, chosen = true)
+        }
+        // Koi nayi command boli ("time kya hua") toh wahi karo
+        val cmd = Parser.parse(learner.rewrite(ans) ?: ans)
+        if (cmd !is Cmd.Unknown && cmd !is Cmd.Chat) { pendingCall = null; return null }
+        if (pc.asked < 1) {
+            pc.asked++
+            val r = askChoice(pc)
+            val hint = if (pc.byName) "Say the name, or first / second." else "Say first, second, or the last digits."
+            val hintHi = if (pc.byName) "नाम बोलिए, या पहला, दूसरा।" else "पहला, दूसरा, या आख़िरी अंक बोलिए।"
+            return Reply("Sorry, I didn't get that. ${r.display}\n($hint)", "माफ़ कीजिए, समझ नहीं आया। $hintHi", endChat = false)
+        }
+        pendingCall = null
+        return Reply("Okay, let's leave it for now", "ठीक है, अभी रहने देते हैं", endChat = true)
+    }
+
+    private fun callNumber(target: String, p: CallChoice.Phone, speaker: Boolean, chosen: Boolean): Reply {
+        val onSpk = if (speaker) " on speaker" else ""
+        val onSpkHi = if (speaker) " स्पीकर पर" else ""
+        val lab = if (chosen && p.label.isNotBlank()) " (${p.label})" else ""
+        return Reply("Calling ${p.name}$lab$onSpk", "${p.name} को$onSpkHi कॉल कर रही हूँ", {
+            learner.rememberContact(target, p.name)
+            learner.rememberNumber(p.name, CallChoice.digitsKey(p.number), p.label.ifBlank { "Number" })
+            startCall(p.number, speaker)
         }, endChat = true)
     }
 
-    private fun startCall(number: String) {
+    /** Saare contacts ke number, label ke saath (Mobile / Work / Home) */
+    private fun loadPhones(favOnly: Boolean): List<CallChoice.Phone> {
+        val out = ArrayList<CallChoice.Phone>()
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER,
+            ContactsContract.CommonDataKinds.Phone.STARRED,
+            ContactsContract.CommonDataKinds.Phone.TYPE,
+            ContactsContract.CommonDataKinds.Phone.LABEL,
+            ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY
+        )
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, null, null,
+                ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY + " DESC"
+            )?.use { cur ->
+                while (cur.moveToNext()) {
+                    val n = cur.getString(0) ?: continue
+                    val num = cur.getString(1) ?: continue
+                    val starred = cur.getInt(2) == 1
+                    if (favOnly && !starred) continue
+                    val label = try {
+                        ContactsContract.CommonDataKinds.Phone.getTypeLabel(ctx.resources, cur.getInt(3), cur.getString(4)).toString()
+                    } catch (e: Exception) { "" }
+                    out.add(CallChoice.Phone(n, num, label, starred))
+                }
+            }
+        } catch (e: Exception) { }
+        return out
+    }
+
+    private fun startCall(number: String, speaker: Boolean = false) {
         // TelecomManager se call lock screen par bhi bina app khole lag jaati hai
         if (granted(Manifest.permission.CALL_PHONE)) {
             try {
                 val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-                tm.placeCall(Uri.fromParts("tel", number, null), null)
+                val extras = Bundle()
+                if (speaker) extras.putBoolean(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+                tm.placeCall(Uri.fromParts("tel", number, null), extras)
+                if (speaker) forceSpeaker()
                 return
             } catch (e: Exception) { }
         }
         launch(Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(number))))
     }
 
+    private val speakerHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Kuch phones ka dialer "speaker se shuru karo" wala signal nahi maanta,
+     * isliye call lagne ke baad khud bhi speaker on karte hain, aur call khatam hone par wapas.
+     */
+    private fun forceSpeaker() {
+        var tries = 0
+        var setByUs = false
+        val step = object : Runnable {
+            override fun run() {
+                tries++
+                val inCall = audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION
+                if (inCall && tries <= 4) {
+                    setSpeaker(true)
+                    setByUs = true
+                }
+                if (inCall || tries <= 4) {
+                    // Call chal rahi hai: har 5 sec dekho (zyada se zyada ~3 ghante)
+                    if (tries < 2200) speakerHandler.postDelayed(this, if (tries <= 4) 1500 else 5000)
+                } else if (setByUs) {
+                    setSpeaker(false)
+                }
+            }
+        }
+        speakerHandler.postDelayed(step, 1500)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setSpeaker(on: Boolean) {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                if (on) {
+                    audio.availableCommunicationDevices
+                        .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                        ?.let { audio.setCommunicationDevice(it) }
+                } else audio.clearCommunicationDevice()
+            }
+        } catch (e: Exception) { }
+        try { audio.isSpeakerphoneOn = on } catch (e: Exception) { }
+    }
+
     private fun launch(intent: Intent) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try { ctx.startActivity(intent) } catch (e: Exception) { }
-    }
-
-    /** Saare sune gaye naamon me se sabse achha milne wala contact */
-    private fun findContact(queries: List<String>, favOnly: Boolean): Contact? {
-        val all = mutableListOf<Contact>()
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER,
-            ContactsContract.CommonDataKinds.Phone.STARRED
-        )
-        try {
-            ctx.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI, projection, null, null, null
-            )?.use { cur ->
-                while (cur.moveToNext()) {
-                    val n = cur.getString(0) ?: continue
-                    val num = cur.getString(1) ?: continue
-                    if (favOnly && cur.getInt(2) != 1) continue
-                    all.add(Contact(n, num))
-                }
-            }
-        } catch (e: Exception) {
-            return null
-        }
-        var best: Contact? = null
-        var bestScore = 0
-        for ((qi, q) in queries.withIndex()) {
-            for (c in all) {
-                // Pehle andaze ko thoda zyada bharosa
-                val base = Parser.contactScore(q, c.name)
-                // Jise aap zyada call karte ho, barabar match par wahi jeete
-                val score = if (base > 0) base - qi + learner.contactBonus(c.name) else 0
-                if (score > bestScore) {
-                    bestScore = score
-                    best = c
-                }
-            }
-        }
-        return if (bestScore >= 30) best else null
     }
 
     // ---------- Torch ----------

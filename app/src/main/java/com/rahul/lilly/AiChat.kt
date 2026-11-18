@@ -15,7 +15,22 @@ object AiChat {
     data class Turn(val role: String, val text: String)
 
     /** command != null: AI ne baat ko phone ki command samjha (jaise "call rohit") */
-    data class Answer(val spoken: String, val display: String, val command: String? = null)
+    /** memory != null: user ne apne baare me koi pakki baat batayi, use yaad rakhna hai */
+    data class Answer(val spoken: String, val display: String, val command: String? = null, val memory: String? = null)
+
+    private const val MEMORY_RULE =
+        " If the user tells you a lasting personal fact about themselves or people in their life " +
+            "(a birthday, a preference, a routine, a relationship, a name, where they live or work), " +
+            "add at the very end: |||MEM: <that fact as one short English sentence about Rahul>. " +
+            "Only for facts worth remembering for months, never for passing moods or questions."
+
+    /** Pehle se yaad baatein system prompt me */
+    private fun systemFor(facts: String): String {
+        val known = if (facts.isBlank()) "" else
+            "\n\nThings you remember about Rahul (use them naturally when relevant; " +
+                "don't list them unless asked):\n$facts"
+        return SYSTEM + MEMORY_RULE + known
+    }
 
     private const val SYSTEM =
         "You are Lilly, Rahul's personal voice assistant, with a warm, friendly female voice. " +
@@ -60,10 +75,17 @@ object AiChat {
         }
     }
 
-    fun ask(keyRaw: String, history: List<Turn>, question: String): Answer {
+    fun ask(keyRaw: String, history: List<Turn>, question: String, facts: String = ""): Answer {
         // Copy-paste me aayi space / nayi line hata do (warna request hi nahi jaati)
         val key = keyRaw.filter { !it.isWhitespace() }
-        val raw = if (key.startsWith("sk-ant-")) anthropic(key, history, question) else gemini(key, history, question)
+        val system = systemFor(facts)
+        var raw = if (key.startsWith("sk-ant-")) anthropic(key, history, question, system) else gemini(key, history, question, system)
+        // "|||MEM: Rahul's gym is at 6 pm" — yaad rakhne wali baat alag nikaalo
+        var memory: String? = null
+        Regex("""(?:\|\|\|)?\s*MEM\s*:\s*(.+)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).find(raw)?.let { m ->
+            memory = m.groupValues[1].trim().trim('"', '.', '`').ifBlank { null }
+            raw = raw.substring(0, m.range.first)
+        }
         // "CMD: call rohit" — phone ka kaam
         Regex("""^\s*CMD\s*:\s*(.+)""", RegexOption.IGNORE_CASE).find(raw.trim())?.let { m ->
             val cmd = m.groupValues[1].lines().first().trim().trim('"', '\'', '.', '`').trim()
@@ -73,7 +95,7 @@ object AiChat {
         val spoken = parts[0].trim()
         val display = (parts.getOrNull(1)?.trim()).takeUnless { it.isNullOrBlank() } ?: Parser.roman(spoken)
         if (spoken.isBlank()) throw IllegalStateException("khali jawab")
-        return Answer(spoken, display)
+        return Answer(spoken, display, memory = memory)
     }
 
     /** body == null toh GET */
@@ -102,14 +124,14 @@ object AiChat {
         }
     }
 
-    private fun anthropic(key: String, history: List<Turn>, question: String): String {
+    private fun anthropic(key: String, history: List<Turn>, question: String, system: String): String {
         val messages = JSONArray()
         for (t in history) messages.put(JSONObject().put("role", t.role).put("content", t.text))
         messages.put(JSONObject().put("role", "user").put("content", question))
         val body = JSONObject()
             .put("model", "claude-haiku-5-5")
             .put("max_tokens", 400)
-            .put("system", SYSTEM)
+            .put("system", system)
             .put("messages", messages)
         val res = post(
             "https://api.anthropic.com/v1/messages",
@@ -125,7 +147,7 @@ object AiChat {
         return sb.toString()
     }
 
-    private fun gemini(key: String, history: List<Turn>, question: String): String {
+    private fun gemini(key: String, history: List<Turn>, question: String, system: String): String {
         fun part(role: String, text: String) = JSONObject()
             .put("role", role)
             .put("parts", JSONArray().put(JSONObject().put("text", text)))
@@ -133,7 +155,7 @@ object AiChat {
         for (t in history) contents.put(part(if (t.role == "assistant") "model" else "user", t.text))
         contents.put(part("user", question))
         val body = JSONObject()
-            .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM))))
+            .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", contents)
             .put("generationConfig", JSONObject().put("maxOutputTokens", 1500))
         val res = geminiCall(key, body.toString())

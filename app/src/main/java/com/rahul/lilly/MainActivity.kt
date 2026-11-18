@@ -39,6 +39,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var lockPopupValue: TextView
     private lateinit var learnedValue: TextView
     private lateinit var realValue: TextView
+    private lateinit var memoryValue: TextView
+    private lateinit var wakeValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -198,6 +200,10 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r8 = row(col)
         realValue = card(r8, "🎤", "Real human voice") { chooseRealVoice() }
+        memoryValue = card(r8, "📒", "What Lilly remembers") { showMemory() }
+
+        val r9 = row(col)
+        wakeValue = card(r9, "👂", "Wake-up sensitivity") { chooseSensitivity() }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -221,6 +227,11 @@ class MainActivity : Activity(), LillyBus.Ui {
             rv == RealVoice.OFF -> "OFF — using phone voice"
             else -> "ON ✓ $rv"
         }
+        val mem = memory()
+        val nf = mem.facts().size
+        val na = mem.answerCount()
+        memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        wakeValue.text = sensLabel(prefs.getString("wake_sens", "normal") ?: "normal")
         val learnedCount = learner().items().size
         learnedValue.text = if (learnedCount == 0) "Nothing yet — tap to see how" else "$learnedCount things learned"
         val allowed = prefs.getStringSet("allowed_apps", null)
@@ -547,6 +558,74 @@ class MainActivity : Activity(), LillyBus.Ui {
         super.onStop()
     }
 
+    private fun memory() = Memory(
+        load = { prefs.getString("memory", null) },
+        save = { prefs.edit().putString("memory", it).apply() }
+    )
+
+    private val memoryHelp =
+        "Lilly remembers things about you and uses them in her AI answers.\n\n" +
+            "• Tell her: \"Remember that my gym is at 6 pm\" / \"Yaad rakhna ki mummy ka birthday 12 June ko hai\"\n" +
+            "• Ask: \"What do you remember about me?\" / \"Mere baare mein kya yaad hai?\"\n" +
+            "• Remove: \"Forget my gym timing\" / \"Gym wali baat bhool jao\"\n" +
+            "• With AI chat on, she also notes lasting facts you mention while chatting\n" +
+            "• Answers to general questions are saved, so asking again is instant and works offline " +
+            "(not for time, news, weather and other things that change)\n\n" +
+            "Saved on this phone. When you ask the AI something, these facts are sent along so the answer fits you."
+
+    private fun showMemory() {
+        val m = memory()
+        val facts = m.facts().reversed()
+        val b = AlertDialog.Builder(this).setTitle("📒 What Lilly remembers")
+        if (facts.isEmpty() && m.answerCount() == 0) {
+            b.setMessage(memoryHelp).setPositiveButton("OK", null).show()
+            return
+        }
+        val rows = facts.map { "• ${it.text}" } + "💾 ${m.answerCount()} saved answers (tap to clear)"
+        b.setItems(rows.toTypedArray()) { _, which ->
+            if (which == facts.size) {
+                AlertDialog.Builder(this).setTitle("Clear saved answers?")
+                    .setPositiveButton("Clear") { _, _ -> m.clearAnswers(); refreshCards() }
+                    .setNegativeButton("Cancel", null).show()
+                return@setItems
+            }
+            val f = facts[which]
+            AlertDialog.Builder(this).setTitle("Forget this?").setMessage(f.text)
+                .setPositiveButton("Forget") { _, _ -> m.forget(f); refreshCards(); showMemory() }
+                .setNegativeButton("Keep", null).show()
+        }
+            .setPositiveButton("Close", null)
+            .setNeutralButton("How it works") { _, _ ->
+                AlertDialog.Builder(this).setTitle("How Lilly remembers").setMessage(memoryHelp).setPositiveButton("OK", null).show()
+            }
+            .setNegativeButton("Forget all") { _, _ ->
+                AlertDialog.Builder(this).setTitle("Forget everything Lilly remembers?")
+                    .setPositiveButton("Forget all") { _, _ -> m.clearAll(); refreshCards() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+            .show()
+    }
+
+    private fun sensLabel(s: String) = when (s) {
+        "low" -> "Low — only a clear “Hey Lilly”"
+        "high" -> "High — wakes faster, more mistakes"
+        else -> "Normal (recommended)"
+    }
+
+    private fun chooseSensitivity() {
+        val codes = listOf("low", "normal", "high")
+        val cur = codes.indexOf(prefs.getString("wake_sens", "normal") ?: "normal")
+        AlertDialog.Builder(this)
+            .setTitle("How easily should Lilly wake up?")
+            .setSingleChoiceItems(codes.map { sensLabel(it) }.toTypedArray(), cur) { d, which ->
+                prefs.edit().putString("wake_sens", codes[which]).apply()
+                refreshCards()
+                d.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun learner() = Learner(
         load = { prefs.getString("learned", null) },
         save = { prefs.edit().putString("learned", it).apply() }
@@ -608,6 +687,8 @@ class MainActivity : Activity(), LillyBus.Ui {
                 arrayOf(
                     "📞  \"Rahul ko call karo\"",
                     "📞  \"Call Mummy\" / \"मम्मी को फोन लगाओ\"",
+                    "🔊  \"Call Rohit on speaker\" / \"Rohit ko speaker pe call karo\"",
+                    "🔢  Two numbers? Lilly asks — say \"first\", \"mobile\" or the last digits",
                     "📱  \"Open YouTube\" / \"WhatsApp kholo\"",
                     "🎵  \"Play Kesariya\" / \"Arijit Singh ke gaane chalao\"",
                     "🎵  \"Play Kesariya on YouTube\" / \"YouTube par Kesariya chalao\"",
@@ -620,6 +701,8 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "🕒  \"What time is it\" / \"Kitne baje hain\"",
                     "📅  \"What's the date\" / \"Aaj ki date kya hai\"",
                     "💬  \"How are you\" / \"Kaisi ho\" / \"Thank you\"",
+                    "📒  \"Remember that my gym is at 6 pm\" / \"Yaad rakhna ki…\"",
+                    "📒  \"What do you remember about me?\"",
                     "🧠  \"When I say good night, turn off the torch\"",
                     "🧠  \"Jab main boss bolun to Rohit ko call karna\""
                 ), null
@@ -634,6 +717,7 @@ class MainActivity : Activity(), LillyBus.Ui {
                 "• \"Hey Lilly\" is recognised on the phone itself (offline)\n" +
                     "• Your commands are turned into text by your phone's Google speech service\n" +
                     "• Questions go to an AI company only if you turn on \"AI chat\"; with a Gemini key, the real voice sends what Lilly says to Google; playing a song on YouTube looks it up online\n" +
+                    "• Things Lilly remembers about you stay on the phone, and are sent along with AI questions\n" +
                     "• On the lock screen, calls go only to the list you chose\n" +
                     "• Opening an app from the lock screen asks you to unlock first\n" +
                     "• App data backup is off"

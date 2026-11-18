@@ -407,8 +407,11 @@ class LillyService : Service() {
     private val realVoice by lazy { RealVoice(this) }
 
     private fun prefetchVoice() = realVoice.prefetch(
-        "Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ",
-        "I didn't hear anything", "कुछ सुनाई नहीं दिया"
+        *(listOf(
+            "Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ",
+            "I didn't hear anything", "कुछ सुनाई नहीं दिया",
+            moreFiller.first, moreFiller.second
+        ) + fillers.flatMap { listOf(it.first, it.second) }).toTypedArray()
     )
 
     private fun voiceLabel(): String {
@@ -605,6 +608,7 @@ class LillyService : Service() {
         stopVosk()
         return try {
             val rec = Recognizer(model, 16000.0f, wakeGrammar)
+            try { rec.setWords(true) } catch (e: Exception) { } // har shabd ka bharosa (confidence) chahiye
             voskRec = rec
             voskService = SpeechService(rec, 16000.0f).also { it.startListening(voskListener) }
             true
@@ -625,12 +629,18 @@ class LillyService : Service() {
         try { r?.close() } catch (e: Exception) { }
     }
 
+    private val wakeSensitivity: String get() = prefs.getString("wake_sens", "normal") ?: "normal"
+
     private fun isWakeText(json: String?, key: String): Boolean {
         if (json.isNullOrBlank()) return false
-        val text = try { JSONObject(json).optString(key) } catch (e: Exception) { "" }
-        // Bolte-bolte (partial) sirf "hey lily" par jaago; vakya poora hone par akela "lily" bhi chalega
-        val re = if (key == "partial") Regex("""\b(hey|hi|hello)\s+lil+y\b""") else Regex("""\blil+y\b""")
-        return re.containsMatchIn(text)
+        if (key == "partial") {
+            // Bolte-bolte jaagna sirf "High" sensitivity par (tez, par galti zyada)
+            if (wakeSensitivity != "high") return false
+            val text = try { JSONObject(json).optString("partial") } catch (e: Exception) { "" }
+            return Regex("""\b(hey|hi|hello)\s+lil+y\b""").containsMatchIn(text)
+        }
+        // Vakya poora: har shabd ka bharosa aur vakya ki lambai dekh kar hi jaago
+        return WakeCheck.accept(json, wakeSensitivity)
     }
 
     private val voskListener = object : org.vosk.android.RecognitionListener {
@@ -712,7 +722,8 @@ class LillyService : Service() {
             when (mode) {
                 Mode.COMMAND ->
                     if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                        if (followUp) {
+                        if (followUp || (wokeByVoice && !heardAny)) {
+                            // Baat khatam / galti se jaagi thi aur kisi ne kuch nahi bola: chupchaap wapas
                             followUp = false
                             endSession()
                             listen(Mode.WAKE)
@@ -732,6 +743,7 @@ class LillyService : Service() {
             val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (mode == Mode.COMMAND && !t.isNullOrBlank()) {
                 lastEvent = System.currentTimeMillis()
+                heardAny = true
                 LillyBus.heard(brain.roman(t))
             }
         }
@@ -747,7 +759,8 @@ class LillyService : Service() {
     private fun handleResults(list: List<String>) {
         when (mode) {
             Mode.WAKE -> {
-                val hit = list.firstOrNull { brain.hasWakeWord(it) }
+                // "Lilly" vakya ke shuru me ho tabhi (beech me aaya "lily" bulawa nahi)
+                val hit = list.firstOrNull { Parser.startsWithWake(it) }
                 if (hit == null) {
                     restartLater()
                     return
@@ -771,8 +784,14 @@ class LillyService : Service() {
     private var tone: ToneGenerator? = null
 
     /** Siri jaisa: chhoti si "ting", orb chamakta hai aur turant sunna shuru */
+    /** Awaaz se jaagi (tap se nahi) — kuch na suna toh chupchaap so jaao */
+    private var wokeByVoice = false
+    private var heardAny = false
+
     private fun activate(fromTap: Boolean) {
         if (mode == Mode.SPEAKING || mode == Mode.COMMAND) return
+        wokeByVoice = !fromTap
+        heardAny = false
         stopVosk()
         LillyBus.heard("")
         if (!fromTap) showOverlay()
@@ -878,6 +897,18 @@ class LillyService : Service() {
     }
 
     /** Normal baat-cheet: sawal AI ko bhejo, jawab bol kar sunao */
+    private val fillers = listOf(
+        "Hmm, let me think" to "हम्म, एक सेकंड",
+        "One second" to "एक सेकंड",
+        "Let me check" to "देखती हूँ",
+        "Okay, let me see" to "अच्छा, देखती हूँ",
+        "Hmm" to "हम्म"
+    )
+    private val moreFiller = "Just a moment more" to "बस थोड़ा सा और"
+    private var lastFiller = -1
+    private var aiToken = 0
+
+    /** Normal baat-cheet: sawal AI ko bhejo; jawab aane tak chup mat raho */
     private fun askAi(question: String) {
         handler.removeCallbacks(wakeRunnable)
         try { recognizer?.cancel() } catch (e: Exception) { }
@@ -887,28 +918,73 @@ class LillyService : Service() {
         LillyBus.ui?.keepAlive()
         val key = prefs.getString("ai_key", "") ?: ""
         val history = ArrayList(aiHistory)
+        val facts = brain.memory.factsForPrompt()
+        val my = ++aiToken
+
+        // Filler: "Hmm…" turant, aur der lage toh "Bas thoda sa aur…" (ek baar)
+        var talking = true
+        var moreSaid = false
+        var ready: (() -> Unit)? = null
+        lateinit var afterTalk: () -> Unit
+        val more = Runnable {
+            if (my == aiToken && ready == null && !talking && !moreSaid && mode == Mode.SPEAKING) {
+                moreSaid = true
+                talking = true
+                sayBi(moreFiller.first, moreFiller.second) { afterTalk() }
+            }
+        }
+        afterTalk = {
+            talking = false
+            val r = ready
+            if (my == aiToken) {
+                if (r != null) {
+                    ready = null
+                    r()
+                } else {
+                    mode = Mode.SPEAKING // mic band rakho, jawab aa raha hai
+                    LillyBus.status("Thinking…")
+                    LillyBus.orb(OrbView.State.SPEAKING)
+                    LillyBus.ui?.keepAlive()
+                    if (!moreSaid) handler.postDelayed(more, 5000)
+                }
+            }
+        }
+        var fi = (fillers.indices).random()
+        if (fi == lastFiller) fi = (fi + 1) % fillers.size
+        lastFiller = fi
+        sayBi(fillers[fi].first, fillers[fi].second) { afterTalk() }
+
         Thread {
             var failure: Throwable? = null
-            val result = try { AiChat.ask(key, history, question) } catch (e: Exception) { failure = e; null }
+            val result = try { AiChat.ask(key, history, question, facts) } catch (e: Exception) { failure = e; null }
             handler.post {
-                if (mode == Mode.STOPPED) return@post
-                if (result == null) {
-                    // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
-                    val why = AiChat.explain(failure)
-                    sayBi(why.first, why.second) { endSession(); listen(Mode.WAKE) }
-                    return@post
+                if (mode == Mode.STOPPED || my != aiToken) return@post
+                handler.removeCallbacks(more)
+                val act: () -> Unit = act@{
+                    if (mode == Mode.STOPPED || my != aiToken) return@act
+                    if (result == null) {
+                        // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
+                        val why = AiChat.explain(failure)
+                        sayBi(why.first, why.second) { endSession(); listen(Mode.WAKE) }
+                        return@act
+                    }
+                    val cmd = result.command
+                    if (cmd != null) {
+                        // AI ne samjha ki ye phone ka kaam hai — karo, aur chal gaya toh agli baar ke liye yaad rakho
+                        LillyBus.heard("“${brain.roman(question)}” → $cmd")
+                        deliver(brain.handleFromAi(question, cmd))
+                        return@act
+                    }
+                    // Baat-cheet me aayi koi pakki baat ("mera birthday 5 March hai") — yaad rakho
+                    result.memory?.let { brain.memory.remember(it) }
+                    // Pehla sawaal ho (pichhli baat par tika na ho) toh jawab save: agli baar turant
+                    if (history.isEmpty()) brain.memory.cacheAnswer(question, result.display, result.spoken, english)
+                    aiHistory.add(AiChat.Turn("user", question))
+                    aiHistory.add(AiChat.Turn("assistant", result.spoken))
+                    while (aiHistory.size > 8) aiHistory.removeAt(0)
+                    say(result.display, result.spoken) { continueChat() }
                 }
-                val cmd = result.command
-                if (cmd != null) {
-                    // AI ne samjha ki ye phone ka kaam hai — karo, aur chal gaya toh agli baar ke liye yaad rakho
-                    LillyBus.heard("“${brain.roman(question)}” → $cmd")
-                    deliver(brain.handleFromAi(question, cmd))
-                    return@post
-                }
-                aiHistory.add(AiChat.Turn("user", question))
-                aiHistory.add(AiChat.Turn("assistant", result.spoken))
-                while (aiHistory.size > 8) aiHistory.removeAt(0)
-                say(result.display, result.spoken) { continueChat() }
+                if (talking) ready = act else act()
             }
         }.start()
     }
@@ -919,6 +995,7 @@ class LillyService : Service() {
         mode = Mode.STOPPED
         started = false
         handler.removeCallbacksAndMessages(null)
+        aiToken++
         muteBeep(false)
         currentUtterance = null
         stopVosk()

@@ -23,6 +23,7 @@ class Learner(
     private val phrases = LinkedHashMap<String, Entry>()
     private val contacts = LinkedHashMap<String, Entry>()
     private val apps = LinkedHashMap<String, Entry>()
+    private val numbers = LinkedHashMap<String, Entry>()
     private val usage = HashMap<String, Int>()
 
     var musicApp: String? = null
@@ -92,6 +93,19 @@ class Learner(
     /** Jo contact zyada call hota hai use thoda aage rakho (0..12) */
     fun contactBonus(name: String): Int = minOf((usage["c:$name"] ?: 0) * 3, 12)
 
+    // ---------------- Kai number wale contact ----------------
+
+    /** Is contact ke kai number me se jo aap 2+ baar chun chuke ho (aakhri 10 ank) */
+    fun numberFor(contact: String): String? {
+        val e = numbers[contact.lowercase()] ?: return null
+        return if (e.taught || e.count >= 2) e.value else null
+    }
+
+    fun rememberNumber(contact: String, digits: String, label: String) {
+        remember(numbers, contact.lowercase(), digits, "$contact · $label …${digits.takeLast(4)}")
+        persist()
+    }
+
     // ---------------- Apps ----------------
 
     fun appFor(spoken: String): String? {
@@ -130,6 +144,9 @@ class Learner(
         for ((k, e) in apps.entries.reversed()) {
             if (e.count >= 2 || e.taught) out.add(Item("a", k, "Open “$k” → ${e.label} (${e.count}×)"))
         }
+        for ((k, e) in numbers.entries.reversed()) {
+            if (e.count >= 2 || e.taught) out.add(Item("n", k, "Number for ${e.label} (${e.count}×)"))
+        }
         musicApp?.let { out.add(Item("m", it, "Songs play on ${it.replaceFirstChar { c -> c.uppercase() }}")) }
         return out
     }
@@ -139,13 +156,14 @@ class Learner(
             "p" -> phrases.remove(item.key)
             "c" -> contacts.remove(item.key)
             "a" -> apps.remove(item.key)
+            "n" -> numbers.remove(item.key)
             "m" -> musicApp = null
         }
         persist()
     }
 
     fun clear() {
-        phrases.clear(); contacts.clear(); apps.clear(); usage.clear()
+        phrases.clear(); contacts.clear(); apps.clear(); numbers.clear(); usage.clear()
         musicApp = null
         lastFailure = null
         persist()
@@ -186,6 +204,7 @@ class Learner(
         for ((k, e) in phrases) line("p", k, e.value, e.label, e.count.toString(), if (e.taught) "1" else "0")
         for ((k, e) in contacts) line("c", k, e.value, e.label, e.count.toString(), if (e.taught) "1" else "0")
         for ((k, e) in apps) line("a", k, e.value, e.label, e.count.toString(), if (e.taught) "1" else "0")
+        for ((k, e) in numbers) line("n", k, e.value, e.label, e.count.toString(), if (e.taught) "1" else "0")
         for ((k, n) in usage) line("u", k, n.toString())
         musicApp?.let { line("m", it) }
         try { save(sb.toString()) } catch (e: Exception) { }
@@ -193,18 +212,19 @@ class Learner(
 
     /** Doosri jagah (app ki screen) se badlaav hua ho toh dobara padho */
     fun reload() {
-        phrases.clear(); contacts.clear(); apps.clear(); usage.clear()
+        phrases.clear(); contacts.clear(); apps.clear(); numbers.clear(); usage.clear()
         musicApp = null
         val data = try { load() } catch (e: Exception) { null } ?: return
         for (raw in data.split('\n')) {
             val f = raw.split('\t')
             try {
                 when (f[0]) {
-                    "p", "c", "a" -> {
+                    "p", "c", "a", "n" -> {
                         val e = Entry(f[2], f[3], f[4].toInt(), f[5] == "1")
                         when (f[0]) {
                             "p" -> phrases[f[1]] = e
                             "c" -> contacts[f[1]] = e
+                            "n" -> numbers[f[1]] = e
                             else -> apps[f[1]] = e
                         }
                     }

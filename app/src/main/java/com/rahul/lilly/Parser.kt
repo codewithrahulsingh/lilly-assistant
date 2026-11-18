@@ -4,7 +4,7 @@ import java.util.Locale
 
 /** Lilly kya samjhi — har command ka ek type */
 sealed class Cmd {
-    data class Call(val target: String) : Cmd()
+    data class Call(val target: String, val speaker: Boolean = false) : Cmd()
     data class Torch(val on: Boolean) : Cmd()
     object Time : Cmd()
     object Date : Cmd()
@@ -21,6 +21,12 @@ sealed class Cmd {
     data class Chat(val topic: String) : Cmd()
     /** "When I say good night, turn off the torch" — phrase sikhana */
     data class Teach(val phrase: String, val action: String) : Cmd()
+    /** "Yaad rakhna ki mera gym 6 baje hai" */
+    data class Remember(val fact: String) : Cmd()
+    /** "Bhool jao ki mera gym 6 baje hai" */
+    data class ForgetFact(val what: String) : Cmd()
+    /** "Mere baare me kya yaad hai?" */
+    object Recall : Cmd()
     data class Unknown(val text: String) : Cmd()
 }
 
@@ -39,11 +45,18 @@ object Parser {
     // ---------- Wake word ----------
 
     private val wakeRegex = Regex(
-        """\b(lilly|lily|lili|lilli|lilie|leely|leli|lilee)\b|लिली|लीली|लिल्ली""", ic
+        // "leli" / "lili" hataye: Hindi ka "le li" bahut aam hai aur galti se Lilly jaag jaati thi
+        """\b(lilly|lily|lilli|lilie|leely|lilee)\b|लिली|लीली|लिल्ली""", ic
     )
     private val leadFiller = Regex("""^[\s,.!?]*(?:(?:hey|hi|hello|ok|okay|हे|हाय)\b)?[\s,.!?]*""", ic)
 
     fun hasWakeWord(t: String) = wakeRegex.containsMatchIn(t)
+
+    /** "Lilly" vakya ke shuru me (pehle 3 shabdon me) — beech me aaya "lily" bulawa nahi hai */
+    fun startsWithWake(t: String): Boolean {
+        val first = t.trim().split(Regex("\\s+")).take(3).joinToString(" ")
+        return wakeRegex.containsMatchIn(first)
+    }
 
     fun stripWakeWord(t: String): String =
         t.replace(wakeRegex, " ").replace(leadFiller, "").replace(Regex("\\s+"), " ").trim()
@@ -89,6 +102,8 @@ object Parser {
         "बताओ" to "batao", "बता" to "bata", "वक्त" to "waqt", "लाइट" to "light", "बदलो" to "badlo",
         "दूसरा" to "doosra", "नहीं" to "nahi", "हाँ" to "haan", "हां" to "haan", "मेरा" to "mera", "मेरी" to "meri",
         "मेरे" to "mere", "आप" to "aap", "बात" to "baat", "कराओ" to "karao", "सर्च" to "search",
+        "स्पीकर" to "speaker", "याद" to "yaad", "रखना" to "rakhna", "रखो" to "rakho", "रखिए" to "rakhiye",
+        "भूल" to "bhool", "जाओ" to "jao", "बारे" to "baare", "पता" to "pata", "जानती" to "jaanti",
         "लिली" to "lilly", "लीली" to "lilly", "हे" to "hey", "हाय" to "hi", "हेलो" to "hello", "हैलो" to "hello"
     )
 
@@ -412,6 +427,48 @@ object Parser {
         return null
     }
 
+    // ---------- Speaker ----------
+
+    private fun stripSpeaker(t: String): String = t
+        .replace(Regex("""\b(?:on|with|in|using)\s+(?:the\s+)?speaker\s*(?:phone|mode)?\b"""), " ")
+        .replace(Regex("""\b(?:and\s+)?(?:put|turn)\s+(?:it\s+)?on\s+speaker\b"""), " ")
+        .replace(Regex("""\bspeaker\s*(?:phone|mode)?\s+(?:pe|par|per|me|mein|on)(?:\s+(?:karke|kar ke|rakh ke|rakhkar|daal ke|dalke|daalkar))?\b"""), " ")
+        .replace(Regex("""\bspeaker\s+(?:on|chalu)\s+(?:karke|kar ke)\b"""), " ")
+        .replace(Regex("""\bspeaker\s*(?:phone)?\s*$"""), " ")
+        .replace(Regex("""\s+"""), " ").trim()
+
+    // ---------- Yaaddasht ----------
+
+    private val rememberPatterns = listOf(
+        Regex("""^(?:remember|don'?t forget)\s+(?:that\s+)?(.{3,})$"""),
+        Regex("""^(?:yaad\s+(?:rakhna|rakho|rakhiye|rakh lo|rakh lena|kar lo))\s+(?:ki\s+|that\s+)?(.{3,})$"""),
+        Regex("""^(.{3,}?)\s+(?:ye\s+|yeh\s+|is baat ko\s+)?yaad\s+(?:rakhna|rakho|rakhiye|rakh lo|rakh lena)$"""),
+        Regex("""^note\s+(?:karo|kar lo|kar lena|kijiye|down|this)\s+(?:ki\s+|that\s+)?(.{3,})$""")
+    )
+    private val forgetPatterns = listOf(
+        Regex("""^forget\s+(?:that\s+|about\s+)?(.{3,})$"""),
+        Regex("""^(?:bhool|bhul)\s+(?:jao|jaao|jaiye|jana)\s+(?:ki\s+)?(.{3,})$"""),
+        Regex("""^(.{3,}?)\s+(?:wali baat\s+)?(?:bhool|bhul)\s+(?:jao|jaao|jaiye|jana)$""")
+    )
+    private val recallRe = Regex(
+        """what do you (?:remember|know) about me|what have you remembered|""" +
+            """mere baare (?:me|mein) (?:kya|kya kya) (?:yaad hai|jaanti ho|janti ho|pata hai)|tumhe (?:kya|kya kya) yaad hai"""
+    )
+    private val notAFact = setOf("it", "this", "that", "everything", "all", "sab", "sab kuch", "kuch nahi", "me", "mujhe")
+
+    private fun memoryCmd(t: String): Cmd? {
+        if (recallRe.containsMatchIn(t)) return Cmd.Recall
+        for (re in rememberPatterns) {
+            val f = re.find(t)?.groupValues?.get(1)?.trim() ?: continue
+            if (f !in notAFact) return Cmd.Remember(f)
+        }
+        for (re in forgetPatterns) {
+            val f = re.find(t)?.groupValues?.get(1)?.trim() ?: continue
+            if (f !in notAFact) return Cmd.ForgetFact(f)
+        }
+        return null
+    }
+
     // ---------- Main: text -> Cmd ----------
 
     private val politeLead = Regex(
@@ -434,6 +491,18 @@ object Parser {
 
         // Sikhana: "jab main boss bolun to Rohit ko call karna" / "when I say good night turn off the torch"
         teachCmd(t)?.let { return it }
+
+        // Yaaddasht: "yaad rakhna ki…" / "remember that…" / "bhool jao ki…" / "mere baare me kya yaad hai"
+        memoryCmd(t)?.let { return it }
+
+        // "Rohit ko speaker pe call karo" / "call Rohit on speaker"
+        if (Regex("""\bspeaker""").containsMatchIn(t)) {
+            val stripped = stripSpeaker(t)
+            if (stripped != t && stripped.isNotBlank()) {
+                val c = parse(stripped)
+                if (c is Cmd.Call) return c.copy(speaker = true)
+            }
+        }
 
         // Torch
         if (Regex("""\b(torch|flash ?light|flash)\b|\b(turn|switch) (on|off) (the )?lights?\b|\blights? (on|off|jalao|jala do|bujhao|bujha do|band)\b""").containsMatchIn(t)) {
