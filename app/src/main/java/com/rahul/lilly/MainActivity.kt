@@ -1166,6 +1166,15 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setTitle("Say \"Lilly\" or \"Hey Lilly\", then (English, Hindi or Hinglish):")
             .setItems(
                 arrayOf(
+                    "✨  NEW: \"Torch jalao aur volume badhao\" — two things at once",
+                    "✨  NEW: after small jobs (torch, time…) just keep talking — no need to say Lilly again",
+                    "📵  \"Kisne call kiya tha?\" / \"Missed calls\" / \"Call back\" / \"Redial\"",
+                    "🛒  \"List me doodh aur bread jodo\" / \"Meri list padho\" / \"Doodh list se hatao\" / \"List saaf karo\"",
+                    "📝  \"Note karo ki gas ka bill bharna hai\" / \"Mere notes padho\"",
+                    "📅  \"Kal ki meeting kya hai?\" / \"Aaj ka schedule batao\"",
+                    "📅  \"Kal 4 baje Ankit ke saath meeting daalo\"",
+                    "✉️  \"Rahul ko SMS karo ki main aa raha hoon\"",
+                    "🎂  \"Meri date of birth 12 June 1998 hai\" / \"Meri DOB kya hai?\"",
                     "📞  \"Rahul ko call karo\"",
                     "📞  \"Call Mummy\" / \"मम्मी को फोन लगाओ\"",
                     "🔊  \"Call Rohit on speaker\" / \"Rohit ko speaker pe call karo\"",
@@ -1434,8 +1443,18 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     // ---------------- Lifecycle ----------------
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
+        // Lilly ne kaha "permission chahiye" (call log / calendar) — yahin poochh lo
+        intent?.getStringExtra("ask_perm")?.let { perm ->
+            intent.removeExtra("ask_perm")
+            if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(perm), 7)
+        }
         LillyBus.ui = this
         LillyBus.launcher = myLauncher
         // Nayi version aayi ho toh batao (6 ghante me ek baar, chupchaap)

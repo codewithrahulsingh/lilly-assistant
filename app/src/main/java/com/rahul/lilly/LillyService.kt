@@ -1068,7 +1068,11 @@ class LillyService : Service() {
         // Internet wala kaam (mausam, good morning…): "Ek second" bolo, background me karo, phir jawab
         reply.later?.let { work -> deliverLater(reply, work); return }
         val then = {
-            if (reply.endChat || reply.action != null) {
+            if (reply.stay) {
+                // Chhota kaam hua — bina "Lilly" bole agli baat suno (chup raho toh band)
+                reply.action?.invoke()
+                continueChat()
+            } else if (reply.endChat || reply.action != null) {
                 endSession()
                 reply.action?.invoke()
                 // Call chal rahi ho toh mic chhod do, call khatam hone ke baad phir sunna shuru

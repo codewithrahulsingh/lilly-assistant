@@ -32,6 +32,8 @@ object Smart {
     }
 
     fun refine(t: String, c: Cmd): Cmd {
+        // "rahul ko SMS karo ki…" — WhatsApp nahi, normal SMS
+        if (c is WhatsAppCmd && c.kind == "msg" && Regex("""\bsms\b""").containsMatchIn(t) && !waWord.containsMatchIn(t)) return c.copy(kind = "sms")
         val loose = c is Cmd.Unknown || c is Cmd.Call || c is Cmd.Chat || c is Cmd.PlayMusic || c is Cmd.OpenApp
         if (waWord.containsMatchIn(t) && loose) whatsapp(t, c)?.let { return it }
         if (musicWord.containsMatchIn(t)) music(t, c)?.let { return it }

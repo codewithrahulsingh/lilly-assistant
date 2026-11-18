@@ -778,3 +778,20 @@ class VoiceMatchTest {
         org.junit.Assert.assertTrue(g.decide(0.42f, "normal"))  // turant dobara — haan
     }
 }
+
+class ExtrasTest {
+    private fun eq(a: Any, b: Any) = org.junit.Assert.assertEquals(a, b)
+    @org.junit.Test fun newFeatures() {
+        eq(CallLogCmd("missed"), Parser.parse("kisne call kiya tha"))
+        eq(CallLogCmd("back"), Parser.parse("jisne call kiya use call karo"))
+        eq(CallLogCmd("redial"), Parser.parse("last number pe call karo"))
+        eq(ListCmd("shopping", "add", "doodh aur bread"), Parser.parse("doodh aur bread list mein daalo"))
+        eq(ListCmd("shopping", "read"), Parser.parse("meri list padho"))
+        eq(ListCmd("notes", "add", "gas ka bill bharna hai"), Parser.parse("note karo ki gas ka bill bharna hai"))
+        eq(CalendarCmd("read", "tomorrow"), Parser.parse("kal ki meeting kya hai"))
+        eq(WhatsAppCmd("rahul", "main aa raha hoon", "sms"), Parser.parse("rahul ko sms karo ki main aa raha hoon"))
+        eq("torch jalao" to "volume badhao", Extras.splitTwo("torch jalao aur volume badhao") { Parser.parse(it) }!!)
+        org.junit.Assert.assertNull(Extras.splitTwo("spotify kholo aur kesariya bajao") { Parser.parse(it) })
+        org.junit.Assert.assertNull(Extras.splitTwo("rahul ko whatsapp karo ki main aur ankit aa rahe hai") { Parser.parse(it) })
+    }
+}

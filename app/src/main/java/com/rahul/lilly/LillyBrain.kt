@@ -45,7 +45,9 @@ class LillyBrain(private val ctx: Context) {
         /** English me bolne ke liye chhota roop (display lamba ho tab) */
         val spokenEn: String? = null,
         /** Internet wala kaam (mausam…): service "Ek second" bol kar background me chalaati hai */
-        val later: (() -> Reply)? = null
+        val later: (() -> Reply)? = null,
+        /** Chhota kaam (torch, volume, time…) — jawab ke baad thodi der bina "Lilly" ke sunti rahe */
+        val stay: Boolean = false
     )
 
     private val prefs get() = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
@@ -127,7 +129,7 @@ class LillyBrain(private val ctx: Context) {
         answerPendingAlarm(heard)?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
-        val reply = decide(texts, allowAi)
+        val reply = twoAtOnce(texts.first()) ?: decide(texts, allowAi)
         if (reply.failed) learner.noteFailure(heard.first())
         else if (reply.action != null) learner.noteSuccess(texts.first())
         return reply
@@ -143,7 +145,34 @@ class LillyBrain(private val ctx: Context) {
         return r
     }
 
+    /** "torch jalao aur volume badhao" — dono kaam ek ke baad ek */
+    private fun twoAtOnce(text: String): Reply? {
+        val (a, b) = Extras.splitTwo(Parser.normalize(text)) { Parser.parse(it) } ?: return null
+        val ra = decide(listOf(a), false)
+        val rb = decide(listOf(b), false)
+        fun done(r: Reply) = !r.failed && r.askAi == null && r.later == null && (r.endChat || r.action != null)
+        if (!done(ra) || !done(rb)) return null
+        val main = Handler(Looper.getMainLooper())
+        return Reply(
+            ra.display + "\n" + rb.display, ra.spoken + "। " + rb.spoken,
+            action = {
+                ra.action?.invoke()
+                rb.action?.let { main.postDelayed({ it() }, 900) }
+            },
+            endChat = true,
+            spokenEn = listOfNotNull(ra.spokenEn ?: ra.display, rb.spokenEn ?: rb.display).joinToString(". ")
+        )
+    }
+
     private fun decide(texts: List<String>, allowAi: Boolean): Reply {
+        val r = decideInner(texts, allowAi)
+        val c = Parser.parse(texts.first())
+        val quick = c is Cmd.Torch || c is Cmd.Volume || c == Cmd.Time || c == Cmd.Date || c == Cmd.Battery ||
+            (c is ListCmd) || (c is CalendarCmd && c.op == "read") || (c is CallLogCmd && (c.kind == "missed" || c.kind == "last"))
+        return if (quick && !r.failed && r.askAi == null) r.copy(stay = true) else r
+    }
+
+    private fun decideInner(texts: List<String>, allowAi: Boolean): Reply {
         val cmds = texts.map { Parser.parse(it) }
         val top = cmds.first()
         // Google ke doosre andazon me se jo pehla asli kaam samjhe (Siri jaisa) — AI tak tabhi jaao jab koi na samjhe
@@ -170,6 +199,9 @@ class LillyBrain(private val ctx: Context) {
             }
             Cmd.Recall -> recallReply()
             is Cmd.RecallAbout -> recallAbout(main)
+            is CallLogCmd -> callLogReply(main.kind)
+            is ListCmd -> listReply(main)
+            is CalendarCmd -> calendarReply(main)
             is NavigateCmd -> navigateReply(main)
             is NearbyCmd -> nearbyReply(main.what)
             is SaveAddressCmd -> saveAddressReply(main)
@@ -833,6 +865,13 @@ class LillyBrain(private val ctx: Context) {
                 Reply("What should I send to ${p.name}?", "${CallChoice.speakName(p.name)} को क्या भेजूँ?", endChat = false)
             } else confirmWa(w)
         }
+        "wa_sms" -> {
+            val num = p.number
+            Reply("SMS to ${p.name}: “$text” — tap Send", "${CallChoice.speakName(p.name)} को एसएमएस लिख दिया है, सेंड दबाइए", {
+                learner.rememberContact(target, p.name)
+                openExternal(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(num))).putExtra("sms_body", text), "Messages")
+            }, endChat = true)
+        }
         "wa_call" -> waCallReply(target, p, video = false)
         "wa_video" -> waCallReply(target, p, video = true)
         else -> callNumber(target, p, speaker, chosen)
@@ -1348,6 +1387,188 @@ class LillyBrain(private val ctx: Context) {
             try { ctx.startActivity(intent); return } catch (e: Exception) { }
         }
         LillyService.notifyOpen(ctx, label, intent)
+    }
+
+    // ---------- Permission (Lilly app me "Allow") ----------
+
+    private fun needPermission(perm: String, what: String, whatHi: String): Reply =
+        Reply("I need permission to read your $what. Opening Lilly — tap Allow, then ask me again.",
+            "इसके लिए परमिशन चाहिए। लिली ऐप खोल रही हूँ, अलाउ दबाकर फिर से बोलिए", {
+                openExternal(Intent(ctx, MainActivity::class.java).putExtra("ask_perm", perm), "Lilly")
+            }, endChat = true)
+
+    // ---------- Call log ----------
+
+    private data class LogCall(val name: String, val number: String, val type: Int, val at: Long)
+
+    private fun recentCalls(limit: Int = 30): List<LogCall> {
+        val out = ArrayList<LogCall>()
+        val c = try {
+            ctx.contentResolver.query(
+                android.provider.CallLog.Calls.CONTENT_URI,
+                arrayOf(android.provider.CallLog.Calls.CACHED_NAME, android.provider.CallLog.Calls.NUMBER,
+                    android.provider.CallLog.Calls.TYPE, android.provider.CallLog.Calls.DATE),
+                null, null, android.provider.CallLog.Calls.DATE + " DESC"
+            )
+        } catch (e: Exception) { null } ?: return out
+        c.use {
+            while (it.moveToNext() && out.size < limit) {
+                out.add(LogCall(it.getString(0) ?: "", it.getString(1) ?: "", it.getInt(2), it.getLong(3)))
+            }
+        }
+        return out
+    }
+
+    private fun whenLabel(at: Long): Pair<String, String> {
+        val c = Calendar.getInstance().apply { timeInMillis = at }
+        val today = Calendar.getInstance()
+        val h = c.get(Calendar.HOUR_OF_DAY); val m = c.get(Calendar.MINUTE)
+        val sameDay = c.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR) && c.get(Calendar.YEAR) == today.get(Calendar.YEAR)
+        return if (sameDay) Pair("at ${TimeParse.label(h, m)}", "${TimeParse.labelHi(h, m)} बजे")
+        else Pair("yesterday or earlier", "पहले")
+    }
+
+    private fun callLogReply(kind: String): Reply {
+        if (!granted(Manifest.permission.READ_CALL_LOG)) return needPermission(Manifest.permission.READ_CALL_LOG, "call history", "कॉल हिस्ट्री")
+        val calls = recentCalls()
+        val MISSED = android.provider.CallLog.Calls.MISSED_TYPE
+        val IN = android.provider.CallLog.Calls.INCOMING_TYPE
+        val OUT = android.provider.CallLog.Calls.OUTGOING_TYPE
+        fun who(l: LogCall) = l.name.ifBlank { "an unknown number" }
+        fun whoHi(l: LogCall) = if (l.name.isBlank()) "अनजान नंबर" else CallChoice.speakName(l.name)
+        when (kind) {
+            "missed" -> {
+                val day = System.currentTimeMillis() - 24 * 3600_000L
+                val m = calls.filter { it.type == MISSED && it.at > day }
+                if (m.isEmpty()) return Reply("No missed calls today", "आज कोई मिस्ड कॉल नहीं है", endChat = true)
+                val top = m.take(4)
+                return Reply(
+                    "${m.size} missed call${if (m.size > 1) "s" else ""}:\n" + top.joinToString("\n") { "• ${who(it)} ${whenLabel(it.at).first}" },
+                    "${m.size} मिस्ड कॉल: " + top.joinToString(", ") { "${whoHi(it)} ${whenLabel(it.at).second}" } + "। वापस कॉल करना हो तो बोलिए: कॉल बैक",
+                    endChat = true,
+                    spokenEn = "${m.size} missed call${if (m.size > 1) "s" else ""}: " + top.joinToString(", ") { "${who(it)} ${whenLabel(it.at).first}" } + ". Say call back to return the call."
+                )
+            }
+            "last" -> {
+                val l = calls.firstOrNull() ?: return Reply("Your call history is empty", "कॉल हिस्ट्री खाली है", endChat = true)
+                val (en, hi) = when (l.type) {
+                    OUT -> "You called" to "आपने कॉल किया था"
+                    MISSED -> "Missed call from" to "मिस्ड कॉल"
+                    else -> "Call from" to "कॉल आया था"
+                }
+                return Reply("$en ${who(l)} ${whenLabel(l.at).first}", "${whoHi(l)} — $hi, ${whenLabel(l.at).second}", endChat = true)
+            }
+            else -> {
+                val l = (if (kind == "redial") calls.firstOrNull { it.type == OUT }
+                else calls.firstOrNull { it.type == MISSED || it.type == IN })
+                    ?: return Reply("I couldn't find that call", "वो कॉल नहीं मिली", endChat = true, failed = true)
+                if (l.number.isBlank()) return Reply("That number is hidden, so I can't call back", "नंबर छुपा हुआ है, कॉल नहीं हो सकती", endChat = true)
+                return callNumber(l.name.ifBlank { l.number }, CallChoice.Phone(l.name.ifBlank { "that number" }, l.number, "", false), false, false)
+            }
+        }
+    }
+
+    // ---------- List / notes ----------
+
+    private fun listItems(list: String): MutableList<String> {
+        val raw = prefs.getString("list_$list", null) ?: return ArrayList()
+        return try {
+            val a = org.json.JSONArray(raw)
+            MutableList(a.length()) { a.getString(it) }
+        } catch (e: Exception) { ArrayList() }
+    }
+
+    private fun saveList(list: String, items: List<String>) {
+        prefs.edit().putString("list_$list", org.json.JSONArray(items).toString()).apply()
+    }
+
+    private fun listReply(c: ListCmd): Reply {
+        val items = listItems(c.list)
+        val name = if (c.list == "notes") "notes" else "list"
+        val nameHi = if (c.list == "notes") "नोट्स" else "लिस्ट"
+        return when (c.op) {
+            "add" -> {
+                val parts = if (c.list == "notes") listOf(c.item)
+                else c.item.split(Regex("""\s*(?:,|\baur\b|\band\b)\s*""")).map { it.trim() }.filter { it.isNotBlank() }
+                val txt = parts.map { if (c.list == "notes") messageText(it) else it }
+                items.addAll(txt.filter { t -> items.none { it.equals(t, true) } })
+                saveList(c.list, items)
+                Reply("Added to your $name: ${txt.joinToString(", ")}", "$nameHi में जोड़ दिया: ${txt.joinToString(", ")}", endChat = true)
+            }
+            "read" -> if (items.isEmpty()) Reply("Your $name is empty", "आपकी $nameHi खाली है", endChat = true)
+            else Reply(
+                "Your $name (${items.size}):\n" + items.joinToString("\n") { "• $it" },
+                "आपकी $nameHi में ${items.size} चीज़ें हैं: " + items.take(10).joinToString(", "),
+                endChat = true,
+                spokenEn = "Your $name has ${items.size}: " + items.take(10).joinToString(", ")
+            )
+            "clear" -> { saveList(c.list, emptyList()); Reply("Cleared your $name", "$nameHi साफ़ कर दी", endChat = true) }
+            else -> {
+                val q = c.item.lowercase()
+                val hit = items.firstOrNull { it.lowercase() == q } ?: items.firstOrNull { it.lowercase().contains(q) || q.contains(it.lowercase()) }
+                if (hit == null) Reply("“${c.item}” isn't on your $name", "${c.item} $nameHi में नहीं है", endChat = true)
+                else { items.remove(hit); saveList(c.list, items); Reply("Removed $hit", "$hit हटा दिया", endChat = true) }
+            }
+        }
+    }
+
+    // ---------- Calendar ----------
+
+    private fun calendarReply(c: CalendarCmd): Reply {
+        val start = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            if (c.day == "tomorrow") add(Calendar.DAY_OF_YEAR, 1)
+        }
+        val dayEn = if (c.day == "tomorrow") "tomorrow" else "today"
+        val dayHi = if (c.day == "tomorrow") "कल" else "आज"
+        if (c.op == "add") {
+            val w = c.at
+            val begin = (start.clone() as Calendar).apply {
+                if (w != null && w.inMinutes >= 0) { timeInMillis = System.currentTimeMillis() + w.inMinutes * 60_000L }
+                else if (w != null && w.hour >= 0) {
+                    var h = w.hour % 12
+                    if (w.period == "pm" || (w.period.isBlank() && w.hour in 1..7)) h += 12 // "4 baje meeting" = shaam 4
+                    if (w.period == "am" && w.hour == 12) h = 0
+                    set(Calendar.HOUR_OF_DAY, if (w.hour == 12 && w.period != "am") 12 else h)
+                    set(Calendar.MINUTE, w.minute)
+                } else set(Calendar.HOUR_OF_DAY, 10)
+            }
+            val i = Intent(Intent.ACTION_INSERT, android.provider.CalendarContract.Events.CONTENT_URI)
+                .putExtra(android.provider.CalendarContract.Events.TITLE, c.title.replaceFirstChar { it.uppercase() })
+                .putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin.timeInMillis)
+                .putExtra(android.provider.CalendarContract.EXTRA_EVENT_END_TIME, begin.timeInMillis + 3600_000L)
+            val h = begin.get(Calendar.HOUR_OF_DAY); val m = begin.get(Calendar.MINUTE)
+            val tl = if (w != null) " at ${TimeParse.label(h, m)}" else ""
+            val tlHi = if (w != null) " ${TimeParse.labelHi(h, m)} बजे" else ""
+            return Reply("${c.title} $dayEn$tl — tap Save", "$dayHi$tlHi की ${c.title} कैलेंडर में भर दी है, सेव दबाइए",
+                { openExternal(i, "Calendar") }, endChat = true)
+        }
+        if (!granted(Manifest.permission.READ_CALENDAR)) return needPermission(Manifest.permission.READ_CALENDAR, "calendar", "कैलेंडर")
+        val end = start.timeInMillis + 24 * 3600_000L
+        val events = ArrayList<Pair<String, Long>>()
+        try {
+            val uri = android.provider.CalendarContract.Instances.CONTENT_URI.buildUpon().let {
+                android.content.ContentUris.appendId(it, start.timeInMillis); android.content.ContentUris.appendId(it, end); it.build()
+            }
+            ctx.contentResolver.query(uri, arrayOf(android.provider.CalendarContract.Instances.TITLE,
+                android.provider.CalendarContract.Instances.BEGIN, android.provider.CalendarContract.Instances.ALL_DAY),
+                null, null, android.provider.CalendarContract.Instances.BEGIN + " ASC")?.use {
+                while (it.moveToNext() && events.size < 8) events.add((it.getString(0) ?: "Event") to (if (it.getInt(2) == 1) -1L else it.getLong(1)))
+            }
+        } catch (e: Exception) { }
+        if (events.isEmpty()) return Reply("Nothing on your calendar $dayEn", "$dayHi कैलेंडर में कुछ नहीं है", endChat = true)
+        fun t(at: Long, hi: Boolean): String {
+            if (at < 0) return if (hi) "पूरा दिन" else "all day"
+            val k = Calendar.getInstance().apply { timeInMillis = at }
+            return if (hi) TimeParse.labelHi(k.get(Calendar.HOUR_OF_DAY), k.get(Calendar.MINUTE)) + " बजे"
+            else TimeParse.label(k.get(Calendar.HOUR_OF_DAY), k.get(Calendar.MINUTE))
+        }
+        return Reply(
+            "${events.size} on your calendar $dayEn:\n" + events.joinToString("\n") { "• ${t(it.second, false)} — ${it.first}" },
+            "$dayHi ${events.size} चीज़ें हैं: " + events.take(5).joinToString(", ") { "${t(it.second, true)} ${it.first}" },
+            endChat = true,
+            spokenEn = "You have ${events.size} $dayEn: " + events.take(5).joinToString(", ") { "${it.first} at ${t(it.second, false)}" }
+        )
     }
 
     private fun openAppSettings() {

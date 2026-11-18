@@ -631,11 +631,16 @@ object Parser {
         // Sikhana: "jab main boss bolun to Rohit ko call karna" / "when I say good night turn off the torch"
         teachCmd(t)?.let { return it }
 
+        Extras.note(t)?.let { return it }
+
         // Yaaddasht: "yaad rakhna ki…" / "remember that…" / "bhool jao ki…" / "mere baare me kya yaad hai"
         memoryCmd(t)?.let { return it }
 
         // Alarm / timer / reminder
         alarmCmd(t)?.let { return it }
+
+        // Call log, list/notes, calendar
+        Extras.parse(t)?.let { return it }
 
         // WhatsApp, rasta, notifications, good morning, mausam, phone settings
         MoreCommands.parse(t)?.let { return it }
