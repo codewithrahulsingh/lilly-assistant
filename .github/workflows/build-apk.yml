@@ -55,6 +55,14 @@ jobs:
             gh release upload voices voice-hi-female.zip --clobber
             rm -rf voice.tar.bz2 vits-piper-hi_IN-priyamvada-medium
           fi
+          if ! echo "$have" | grep -qx voice-hi-male.zip; then
+            curl -fSL -o voicem.tar.bz2 \
+              https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-hi_IN-pratham-medium.tar.bz2
+            tar xf voicem.tar.bz2
+            (cd vits-piper-hi_IN-pratham-medium && zip -qr ../voice-hi-male.zip .)
+            gh release upload voices voice-hi-male.zip --clobber
+            rm -rf voicem.tar.bz2 vits-piper-hi_IN-pratham-medium
+          fi
           if ! echo "$have" | grep -qx voice-kokoro.zip; then
             curl -fSL -o kokoro.tar.bz2 \
               https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2
@@ -85,8 +93,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.0-build${{ github.run_number }}
-          name: Lilly v5.0 (build ${{ github.run_number }})
+          tag_name: v5.1-build${{ github.run_number }}
+          name: Lilly v5.1 (build ${{ github.run_number }})
           body: "Download Lilly.apk on your phone and install it."
           files: Lilly.apk
           make_latest: true

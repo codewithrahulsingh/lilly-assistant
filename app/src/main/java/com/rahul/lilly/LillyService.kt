@@ -547,8 +547,12 @@ class LillyService : Service() {
         say(en, if (english || hi.isBlank()) enSpoken else hi, then)
     }
 
-    private fun say(display: String, spoken: String, then: (() -> Unit)? = null) {
+    private fun say(display0: String, spoken0: String, then: (() -> Unit)? = null) {
         if (mode == Mode.STOPPED) return
+        // Ladke ki awaaz chuni hai toh baatein bhi ladke wali (karunga, raha hoon)
+        val male = voiceSource() == "offline" && OfflineVoice.isMale(this)
+        val display = if (male) Persona.masculine(display0) else display0
+        val spoken = if (male) Persona.masculine(spoken0) else spoken0
         handler.removeCallbacks(wakeRunnable)
         try { recognizer?.cancel() } catch (e: Exception) { }
         stopVosk()
@@ -1077,6 +1081,7 @@ class LillyService : Service() {
         Thread {
             var failure: Throwable? = null
             val inEnglish = english
+            AiChat.male = voiceSource() == "offline" && OfflineVoice.isMale(this)
             val result = try { AiChat.askWithFallback(prefs, history, question, facts, inEnglish) } catch (e: Exception) { failure = e; null }
             handler.post {
                 if (mode == Mode.STOPPED || my != aiToken) return@post

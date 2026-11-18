@@ -22,25 +22,36 @@ import java.util.zip.ZipInputStream
  * Phone ke andar chalne wali insaani ladki ki awaaz (sherpa-onnx). Ek baar download, phir hamesha wahi awaaz:
  * bina internet, bina limit. Jo awaaz aap chuno wahi pakki — Lilly khud kabhi nahi badalti.
  *
- * Packs:
- *  - "kokoro": ek model, kai natural awaazein (Indian ladki: Ananya, Diya; English: Heart, Emma)
- *  - "piper":  Priyamvada (chhota download)
+ * Packs: "piper" = Priyamvada (ladki), "pratham" = Pratham (ladka). Dono Hindi + English.
  */
 object OfflineVoice {
 
-    data class VoiceChoice(val id: String, val name: String, val about: String, val pack: String, val sid: Int)
+    data class VoiceChoice(
+        val id: String, val name: String, val about: String, val pack: String, val sid: Int, val male: Boolean = false
+    )
 
+    /** Rahul ki pasand: ladki (Priyamvada) ya ladka (Pratham). Ladke ki awaaz chuno toh Lilly ladke ki tarah baat karti hai */
     val CHOICES = listOf(
-        VoiceChoice("kokoro:31", "Ananya", "Indian woman, warm — Hindi + English", "kokoro", 31),
-        VoiceChoice("kokoro:32", "Diya", "Indian woman, soft — Hindi + English", "kokoro", 32),
-        VoiceChoice("kokoro:3", "Heart", "Clear and friendly, English-style accent", "kokoro", 3),
-        VoiceChoice("kokoro:21", "Emma", "Calm, British-style accent", "kokoro", 21),
-        VoiceChoice("piper", "Priyamvada", "Hindi, smaller download", "piper", 0)
+        VoiceChoice("piper", "Priyamvada", "Girl's voice — talks like a girl (karungi, rahi hoon)", "piper", 0),
+        VoiceChoice("pratham", "Pratham", "Boy's voice — talks like a boy (karunga, raha hoon)", "pratham", 0, male = true)
     )
 
     private const val BASE = "https://github.com/codewithrahulsingh/lilly-assistant/releases/download/voices/"
-    fun packUrl(pack: String) = BASE + if (pack == "kokoro") "voice-kokoro.zip" else "voice-hi-female.zip"
-    fun packMb(pack: String) = if (pack == "kokoro") 125 else 60
+    fun packUrl(pack: String) = BASE + when (pack) {
+        "kokoro" -> "voice-kokoro.zip"
+        "pratham" -> "voice-hi-male.zip"
+        else -> "voice-hi-female.zip"
+    }
+    fun packMb(pack: String) = if (pack == "kokoro") 125 else 64
+
+    /** Chuni hui awaaz ladke ki hai? (tab baatein bhi ladke wali) */
+    fun isMale(ctx: Context): Boolean = chosen(ctx)?.male == true
+
+    /** Purana Kokoro pack (ab list me nahi) — jagah khali karo */
+    fun cleanupOld(ctx: Context) {
+        val k = dir(ctx, "kokoro")
+        if (k.exists()) Thread { k.deleteRecursively() }.start()
+    }
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var engine: OfflineTts? = null
@@ -54,7 +65,11 @@ object OfflineVoice {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE)
 
-    fun dir(ctx: Context, pack: String) = File(ctx.filesDir, if (pack == "kokoro") "voicepack-kokoro" else "voicepack")
+    fun dir(ctx: Context, pack: String) = File(ctx.filesDir, when (pack) {
+        "kokoro" -> "voicepack-kokoro"
+        "pratham" -> "voicepack-pratham"
+        else -> "voicepack"
+    })
 
     fun packInstalled(ctx: Context, pack: String): Boolean {
         val d = dir(ctx, pack)

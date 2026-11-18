@@ -734,3 +734,13 @@ class PaymentModeTest {
         assertEquals(SettingCmd("helper", "off"), Parser.parse("turn off the helper"))
     }
 }
+
+class PersonaTest {
+    @org.junit.Test fun boyTalk() {
+        org.junit.Assert.assertEquals("मैं कॉल लगा रहा हूँ", Persona.masculine("मैं कॉल लगा रही हूँ"))
+        org.junit.Assert.assertEquals("मैं लिली हूँ। मैं मदद करूँगा", Persona.masculine("मैं लिली हूँ। मैं मदद करूँगी"))
+        org.junit.Assert.assertEquals("बैटरी खत्म होगी", Persona.masculine("बैटरी खत्म होगी"))
+        org.junit.Assert.assertEquals("Main call laga raha hoon", Persona.masculine("Main call laga rahi hoon"))
+        org.junit.Assert.assertEquals("main samajh nahi paaya", Persona.masculine("main samajh nahi paayi"))
+    }
+}

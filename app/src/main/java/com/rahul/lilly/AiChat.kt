@@ -29,8 +29,16 @@ object AiChat {
         val known = if (facts.isBlank()) "" else
             "\n\nThings you remember about Rahul (use them naturally when relevant; " +
                 "don't list them unless asked):\n$facts"
-        return SYSTEM + MEMORY_RULE + known
+        val base = if (male) SYSTEM.replace(FEMALE_LINE, MALE_LINE).replace("with a warm, friendly female voice", "with a warm, friendly male voice") else SYSTEM
+        return base + MEMORY_RULE + known
     }
+
+    /** Rahul ne ladke ki awaaz chuni ho toh AI bhi ladke ki tarah bole */
+    @Volatile var male = false
+    private const val FEMALE_LINE =
+        "You are a woman: in Hindi always use feminine forms (sakti hoon, karti hoon, rahi hoon, gayi), never masculine. "
+    private const val MALE_LINE =
+        "You are a man: in Hindi always use masculine forms (sakta hoon, karta hoon, raha hoon, gaya, karunga), never feminine. "
 
     private const val SYSTEM =
         "You are Lilly, Rahul's personal voice assistant, with a warm, friendly female voice. " +

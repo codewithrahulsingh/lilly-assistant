@@ -574,7 +574,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun deleteVoicePacks(packs: List<String>) {
-        val names = packs.map { p -> if (p == "kokoro") "Ananya / Diya / Heart / Emma (${OfflineVoice.packMb(p)} MB)" else "Priyamvada (${OfflineVoice.packMb(p)} MB)" }
+        val names = packs.map { p -> (OfflineVoice.CHOICES.firstOrNull { it.pack == p }?.name ?: p) + " (${OfflineVoice.packMb(p)} MB)" }
         AlertDialog.Builder(this).setTitle("Delete which voice download?")
             .setItems(names.toTypedArray()) { _, w ->
                 OfflineVoice.delete(this, packs[w])
@@ -589,13 +589,16 @@ class MainActivity : Activity(), LillyBus.Ui {
         val wait = AlertDialog.Builder(this).setTitle("🎧 ${v.name}")
             .setMessage("Lilly is speaking… (the first time can take a few seconds)")
             .setCancelable(false).show()
-        val line = "नमस्ते राहुल, मैं लिली हूँ। बताइए, मैं आपकी क्या मदद करूँ? Hi Rahul, I'm Lilly."
+        val line = if (v.male) "नमस्ते राहुल, मैं आपकी मदद के लिए हमेशा तैयार रहूँगा। बताइए, क्या करना है? Hi Rahul, I'm ready."
+        else "नमस्ते राहुल, मैं लिली हूँ। मैं आपकी मदद के लिए हमेशा तैयार रहूँगी। Hi Rahul, I'm Lilly."
         OfflineVoice.speak(this, line, prefs.getFloat("voice_speed", 1.0f),
             onDone = {
                 try { wait.dismiss() } catch (e: Exception) { }
                 if (isFinishing) return@speak
                 AlertDialog.Builder(this).setTitle("Keep ${v.name}?")
-                    .setMessage("If you keep this voice, Lilly will always speak in it. It won't change by itself — only if you pick a different one here.")
+                    .setMessage("If you keep this voice, Lilly will always speak in it" +
+                        (if (v.male) " and talk like a boy (karunga, raha hoon)." else " and talk like a girl (karungi, rahi hoon).") +
+                        " It won't change by itself — only if you pick a different one here.")
                     .setPositiveButton("Keep ${v.name} 🔒") { _, _ ->
                         OfflineVoice.choose(this, v.id)
                         prefs.edit().putString("voice_source", "offline").apply()
@@ -975,7 +978,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setTitle("🎤 Give Lilly one fixed human voice?")
             .setMessage(
                 "Right now Lilly's online voice switches to the phone's robot voice when the internet is slow or the free limit is used up.\n\n" +
-                    "Pick one of 5 human voices (one-time download) and she will always speak in that same voice — no internet, no limit."
+                    "Pick a girl's or a boy's human voice (one-time download) and she will always speak in that same voice — no internet, no limit."
             )
             .setPositiveButton("Pick a voice") { _, _ -> pickOfflineVoice() }
             .setNegativeButton("Later", null)
@@ -1190,6 +1193,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         LillyBus.launcher = myLauncher
         // Nayi version aayi ho toh batao (6 ghante me ek baar, chupchaap)
         Updater.check(this, userAsked = false) { refreshCards() }
+        OfflineVoice.cleanupOld(this)
         offerOfflineVoice()
         status.text = LillyBus.lastStatus.ifBlank { "Starting up…" }
         heard.text = LillyBus.lastHeard
