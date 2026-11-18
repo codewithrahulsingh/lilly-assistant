@@ -218,6 +218,10 @@ object MoreCommands {
     private val offWords = Regex("""\b(off|band|bandh|hatao|hata do|disable|deactivate|turn off|switch off|nikalo)\b""")
 
     private fun settings(t: String): Cmd? {
+        // Payment apps Accessibility helper se rukte hain — "payment mode" = helper band
+        if (Regex("""\b(payment mode|payment karna hai|paise bhejne hai|helper (?:band|off|hatao|band karo)|turn off (?:the )?helper)\b""").containsMatchIn(t)) {
+            return SettingCmd("helper", "off")
+        }
         if (Regex("""\b(do not disturb|dont disturb|don't disturb|dnd|disturb mat karo|disturb na karo)\b""").containsMatchIn(t)) {
             return SettingCmd("dnd", if (offWords.containsMatchIn(t)) "off" else "on")
         }

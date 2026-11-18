@@ -419,6 +419,15 @@ class LillyBrain(private val ctx: Context) {
                 }
                 return Reply(en, hi, { try { audio.ringerMode = mode } catch (e: Exception) { } }, endChat = true)
             }
+            "helper" -> {
+                return if (LillyAccess.turnOff()) Reply(
+                    "Helper is off. Payment apps will work now",
+                    "हेल्पर बंद कर दिया, अब पेमेंट ऐप चलेंगे", endChat = true
+                ) else Reply(
+                    "Helper is already off. Payment apps should work",
+                    "हेल्पर पहले से बंद है, पेमेंट ऐप चलने चाहिए", endChat = true
+                )
+            }
             "brightness" -> {
                 if (!Settings.System.canWrite(ctx)) {
                     return Reply(

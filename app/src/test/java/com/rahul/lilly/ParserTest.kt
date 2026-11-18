@@ -725,3 +725,12 @@ class WhatsAppPhrasingTest {
         assertEquals(Cmd.OpenApp("messages"), p("messages kholo"))
     }
 }
+
+class PaymentModeTest {
+    @Test fun paymentMode() {
+        assertEquals(SettingCmd("helper", "off"), Parser.parse("payment mode"))
+        assertEquals(SettingCmd("helper", "off"), Parser.parse("Lilly payment mode on karo"))
+        assertEquals(SettingCmd("helper", "off"), Parser.parse("helper band karo"))
+        assertEquals(SettingCmd("helper", "off"), Parser.parse("turn off the helper"))
+    }
+}

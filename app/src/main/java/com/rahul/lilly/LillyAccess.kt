@@ -60,6 +60,16 @@ class LillyAccess : AccessibilityService() {
         /** WhatsApp chat me "Voice call" / "Video call" dabao */
         fun callOnWhatsApp(video: Boolean) = start(if (video) "wa_video" else "wa_call", "", 12_000)
 
+        /**
+         * Helper band karo (payment apps ke liye). Android app ko khud ON karne nahi deta,
+         * par band khud kar sakta hai. @return true agar band hua
+         */
+        fun turnOff(): Boolean {
+            val i = instance ?: return false
+            job = null
+            return try { i.disableSelf(); true } catch (e: Exception) { false }
+        }
+
         /** Call screen par "Speaker" dabao */
         fun pressSpeaker() = start("speaker", "", 15_000)
 

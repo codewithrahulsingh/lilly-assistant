@@ -574,6 +574,24 @@ class MainActivity : Activity(), LillyBus.Ui {
             })
     }
 
+    /** Payment apps ke liye helper band */
+    private fun turnOffHelper() {
+        val off = LillyAccess.turnOff()
+        refreshCards()
+        if (off) {
+            AlertDialog.Builder(this)
+                .setTitle("Helper is off ✓")
+                .setMessage(
+                    "Payment and bank apps should work now. If one still shows the warning, close it fully (remove from recent apps) and open it again.\n\n" +
+                        "Lilly still does everything else. Spotify will only search, and WhatsApp will fill in your message for you to tap Send."
+                )
+                .setPositiveButton("OK", null).show()
+        } else {
+            android.widget.Toast.makeText(this, "Turn off \"Lilly helper\" here", android.widget.Toast.LENGTH_LONG).show()
+            tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+    }
+
     private fun useVoice(src: String) {
         prefs.edit().putString("voice_source", src).apply()
         refreshCards()
@@ -853,8 +871,10 @@ class MainActivity : Activity(), LillyBus.Ui {
                 .setMessage(
                     "Lilly can now press buttons for you, only right after you ask:\n" +
                         "• Spotify: taps the first song so it plays\n• WhatsApp: taps Send / Call\n• Calls: taps Speaker\n\n" +
-                        "To turn it off: Settings → Accessibility → Lilly helper."
+                        "⚠️ PhonePe, GPay, Paytm and bank apps block payments while any helper like this is on " +
+                        "(it's their fraud protection). Turn it off before paying."
                 )
+                .setNegativeButton("Turn off (for payments)") { _, _ -> turnOffHelper() }
                 .setPositiveButton("OK", null)
                 .setNeutralButton("Settings") { _, _ -> tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
                 .show()
@@ -867,6 +887,8 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "and some phones ignore \"call on speaker\". With this on, Lilly presses that last button for you:\n" +
                     "• Spotify: the first song   • WhatsApp: Send / Call   • Calls: Speaker\n\n" +
                     "• She only presses a button right after you ask\n" +
+                    "• ⚠️ While it's on, payment and bank apps (PhonePe, GPay, Paytm…) will show \"suspicious app\" and block payments. " +
+                    "Without it, Lilly still searches Spotify and fills the WhatsApp message — you just tap Play / Send yourself.\n" +
                     "• Notifications are read only if you also turn on \"Read my notifications\"\n" +
                     "• Nothing is saved or sent anywhere\n\n" +
                     "Steps:\n" +
