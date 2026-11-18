@@ -671,13 +671,66 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
-    private fun batterySettings() {
+    private fun openBatterySettings() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         if (pm.isIgnoringBatteryOptimizations(packageName)) {
-            tryStart(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            if (!tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))))
+                tryStart(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         } else {
             tryStart(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         }
+    }
+
+    /** Har company ki "Auto-start" wali screen alag jagah hoti hai */
+    private fun openAutoStart() {
+        val screens = listOf(
+            "com.miui.securitycenter" to "com.miui.permcenter.autostart.AutoStartManagementActivity",
+            "com.coloros.safecenter" to "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+            "com.coloros.safecenter" to "com.coloros.safecenter.startupapp.StartupAppListActivity",
+            "com.oplus.safecenter" to "com.oplus.safecenter.startupapp.StartupAppListActivity",
+            "com.oppo.safe" to "com.oppo.safe.permission.startup.StartupAppListActivity",
+            "com.vivo.permissionmanager" to "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+            "com.iqoo.secure" to "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+            "com.huawei.systemmanager" to "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            "com.oneplus.security" to "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity",
+            "com.samsung.android.lool" to "com.samsung.android.sm.ui.battery.BatteryActivity",
+            "com.asus.mobilemanager" to "com.asus.mobilemanager.autostart.AutoStartActivity",
+            "com.letv.android.letvsafe" to "com.letv.android.letvsafe.AutobootManageActivity"
+        )
+        for ((pkg, cls) in screens) {
+            if (tryStart(Intent().setClassName(pkg, cls))) return
+        }
+        android.widget.Toast.makeText(this, "Open “App info” → Battery / Auto-launch and allow Lilly", android.widget.Toast.LENGTH_LONG).show()
+        tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+    }
+
+    private fun batterySettings() {
+        val brand = Build.MANUFACTURER.lowercase()
+        val lock = when {
+            "xiaomi" in brand || "redmi" in brand || "poco" in brand ->
+                "Open recent apps, long-press the Lilly card and tap the 🔒 lock."
+            "samsung" in brand -> "Open recent apps, tap the Lilly icon on top of its card → \"Keep open\"."
+            "vivo" in brand || "iqoo" in brand -> "Open recent apps and swipe the Lilly card down to lock it."
+            "oppo" in brand || "realme" in brand || "oneplus" in brand ->
+                "Open recent apps, tap ⋮ (or long-press) on the Lilly card → \"Lock\"."
+            else -> "Open recent apps and look for a lock option on the Lilly card (long-press or ⋮)."
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Keep Lilly running")
+            .setMessage(
+                "When you clear Lilly from recent apps, your phone (${Build.MANUFACTURER}) may fully close her to save battery. " +
+                    "Then she can't hear \"Lilly\" until you open the app again.\n\n" +
+                    "Do these 3 things once:\n\n" +
+                    "1. Battery → set Lilly to \"Unrestricted\" / \"No restrictions\" / \"Allow background activity\"\n\n" +
+                    "2. Auto-start / Auto-launch → turn ON for Lilly\n\n" +
+                    "3. Lock Lilly in recent apps: $lock\n" +
+                    "After this, \"Clear all\" won't close her.\n\n" +
+                    "If your phone still closes Lilly, you'll get a notification — tap it and she starts listening again."
+            )
+            .setPositiveButton("Battery") { _, _ -> openBatterySettings() }
+            .setNeutralButton("Auto-start") { _, _ -> openAutoStart() }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun showHelp() {

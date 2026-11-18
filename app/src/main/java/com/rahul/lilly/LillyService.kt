@@ -232,6 +232,26 @@ class LillyService : Service() {
     }
     private fun wakeRunnableRef(): Runnable = wakeRunnable
 
+    /**
+     * Recent apps se Lilly hatayi gayi. Stock Android par service chalti rehti hai, par kai phones
+     * (Xiaomi, Oppo, Vivo, Realme, OnePlus…) process band kar dete hain — 2 sec baad khud dobara
+     * shuru hone ki koshish. Android mic wali service background se shuru na karne de toh
+     * "Tap karke chalu karo" wala notification aata hai.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (mode != Mode.STOPPED && prefs.getBoolean("enabled", true)) {
+            try {
+                val pi = PendingIntent.getForegroundService(
+                    this, 21, Intent(this, LillyService::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                val am = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                am.set(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, android.os.SystemClock.elapsedRealtime() + 2000, pi)
+            } catch (e: Exception) { }
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
