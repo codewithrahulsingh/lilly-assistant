@@ -744,3 +744,21 @@ class PersonaTest {
         org.junit.Assert.assertEquals("main samajh nahi paaya", Persona.masculine("main samajh nahi paayi"))
     }
 }
+
+class SmartTest {
+    private fun eq(a: Any, b: Any) = org.junit.Assert.assertEquals(a, b)
+    @org.junit.Test fun siriLikeCommands() {
+        eq(Cmd.PlayMusic("kesariya", "spotify"), Parser.parse("spotify kholo aur kesariya bajao"))
+        eq(Cmd.PlayMusic("kesariya", ""), Parser.parse("gaana chalao kesariya"))
+        eq(Cmd.PlayMusic("", ""), Parser.parse("koi accha sa gana sunao"))
+        eq(Cmd.PlayMusic("", "spotify"), Parser.parse("mujhe gaane sunne hai spotify pe"))
+        eq(WhatsAppCmd("rahul", "kal milte hai", "msg"), Parser.parse("rahul ko whatsapp karo ki kal milte hai"))
+        eq(WhatsAppCmd("mummy", "", "call"), Parser.parse("whatsapp pe mummy ko call karo"))
+        eq(WhatsAppCmd("papa", "", "video"), Parser.parse("whatsapp par video call karo papa ko"))
+        eq(WhatsAppCmd("ankit", "hi", "msg"), Parser.parse("send hi to ankit on whatsapp"))
+        eq(Cmd.Remember("My date of birth is 12 june 1998"), Parser.parse("meri dob 12 june 1998 hai"))
+        org.junit.Assert.assertTrue(Parser.parse("meri date of birth kya hai") is Cmd.RecallAbout)
+        eq(Cmd.Date, Parser.parse("aaj date kya hai"))
+        org.junit.Assert.assertTrue(Smart.isRefusal("Sorry, I can't access your WhatsApp"))
+    }
+}

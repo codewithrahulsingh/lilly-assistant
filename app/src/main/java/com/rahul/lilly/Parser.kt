@@ -27,6 +27,8 @@ sealed class Cmd {
     data class ForgetFact(val what: String) : Cmd()
     /** "Mere baare me kya yaad hai?" */
     object Recall : Cmd()
+    /** Yaad me se ek khaas baat ("meri DOB kya hai") */
+    data class RecallAbout(val words: List<String>, val whose: String?) : Cmd()
     /** label = reminder ka kaam ("call mom"), repeat = "", "daily", "weekdays" */
     data class Alarm(val at: TimeParse.When, val label: String = "", val repeat: String = "") : Cmd()
     /** Samay nahi bola — poochho */
@@ -619,6 +621,12 @@ object Parser {
     fun parse(input: String): Cmd {
         val t = normalize(input)
         if (t.isBlank()) return Cmd.Unknown("")
+        // Janamdin / DOB — "date" shabd ki wajah se aaj ki tareekh na bata de
+        if (!Regex("""\b(yaad|remember|note|bhool|forget)\b""").containsMatchIn(t)) Smart.personal(t)?.let { return it }
+        return Smart.refine(t, parseRules(input, t))
+    }
+
+    private fun parseRules(input: String, t: String): Cmd {
 
         // Sikhana: "jab main boss bolun to Rohit ko call karna" / "when I say good night turn off the torch"
         teachCmd(t)?.let { return it }

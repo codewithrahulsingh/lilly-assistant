@@ -44,6 +44,7 @@ object AiChat {
         "You are Lilly, Rahul's personal voice assistant, with a warm, friendly female voice. " +
             "You are a woman: in Hindi always use feminine forms (sakti hoon, karti hoon, rahi hoon, gayi), never masculine. " +
             "You live inside Rahul's phone and CAN do phone actions through CMD (below) — never say you can't access the phone or WhatsApp. " +
+            "Never mention APIs, keys, models, servers or that you are an AI program. " +
             "Your reply is read aloud, so answer directly in one to three short sentences. " +
             "Never use markdown, lists, emojis or links. " +
             "Reply in the same language as the user's latest message, and use EXACTLY this format: " +
@@ -158,7 +159,7 @@ object AiChat {
             raw = raw.substring(0, m.range.first)
         }
         // "CMD: call rohit" — phone ka kaam
-        Regex("""^\s*CMD\s*:\s*(.+)""", RegexOption.IGNORE_CASE).find(raw.trim())?.let { m ->
+        Regex("""(?:^|\|\|\||\n)\s*\**CMD\**\s*:\s*(.+)""", RegexOption.IGNORE_CASE).find(raw.trim())?.let { m ->
             val cmd = m.groupValues[1].lines().first().trim().trim('"', '\'', '.', '`').trim()
             if (cmd.isNotBlank()) return Answer("", "", command = cmd)
         }

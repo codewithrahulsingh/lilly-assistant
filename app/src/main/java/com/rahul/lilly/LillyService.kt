@@ -1116,7 +1116,21 @@ class LillyService : Service() {
                     if (result == null) {
                         // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
                         val why = AiChat.explain(failure)
-                        sayBi(why.first, why.second) { endSession(); listen(Mode.WAKE) }
+                        if (Smart.looksLikeAction(question)) {
+                            // Phone ka kaam tha par samajh nahi aaya — AI/key ki baat mat karo, seedha phir se poochho
+                            sayBi("Sorry, I didn't get that. Try: \"Play Kesariya on Spotify\" or \"WhatsApp Rahul that I'm coming\"",
+                                "माफ़ कीजिए, समझ नहीं पाई। ऐसे बोलिए: स्पॉटिफाई पर केसरिया चलाओ") { continueChat() }
+                        } else {
+                            // Screen par asli wajah, bolne me seedhi baat
+                            val net = failure is java.net.UnknownHostException || failure is java.net.ConnectException
+                            val spoken = when {
+                                net && english -> "There's no internet right now"
+                                net -> "अभी इंटरनेट नहीं चल रहा"
+                                english -> "Sorry, I couldn't get an answer right now. Please ask again in a bit"
+                                else -> "अभी जवाब नहीं मिल पाया, थोड़ी देर बाद पूछिए"
+                            }
+                            say(why.first, spoken) { endSession(); listen(Mode.WAKE) }
+                        }
                         return@act
                     }
                     val cmd = result.command
@@ -1124,6 +1138,12 @@ class LillyService : Service() {
                         // AI ne samjha ki ye phone ka kaam hai — karo, aur chal gaya toh agli baar ke liye yaad rakho
                         LillyBus.heard("“${brain.roman(question)}” → $cmd")
                         deliver(brain.handleFromAi(question, cmd))
+                        return@act
+                    }
+                    // Phone ka kaam bola tha aur AI "nahi kar sakti / API…" keh rahi hai — wo mat sunao
+                    if (Smart.looksLikeAction(question) && Smart.isRefusal(result.display + " " + result.spoken)) {
+                        sayBi("Sorry, I didn't get that. Try: \"Play Kesariya on Spotify\" or \"WhatsApp Rahul that I'm coming\"",
+                            "माफ़ कीजिए, समझ नहीं पाई। ऐसे बोलिए: स्पॉटिफाई पर केसरिया चलाओ") { continueChat() }
                         return@act
                     }
                     // Baat-cheet me aayi koi pakki baat ("mera birthday 5 March hai") — yaad rakho

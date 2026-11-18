@@ -146,8 +146,9 @@ class LillyBrain(private val ctx: Context) {
     private fun decide(texts: List<String>, allowAi: Boolean): Reply {
         val cmds = texts.map { Parser.parse(it) }
         val top = cmds.first()
-        val main = if (top !is Cmd.Unknown) top else cmds.firstOrNull {
-            it is Cmd.Call || it is Cmd.OpenApp || it is Cmd.PlayMusic || it is Cmd.Torch || it is Cmd.Media
+        // Google ke doosre andazon me se jo pehla asli kaam samjhe (Siri jaisa) — AI tak tabhi jaao jab koi na samjhe
+        val main = if (top !is Cmd.Unknown && top !is Cmd.Chat) top else cmds.firstOrNull {
+            it !is Cmd.Unknown && it !is Cmd.Chat && it !is Cmd.Teach && it !is Cmd.Remember
         } ?: top
 
         return when (main) {
@@ -168,6 +169,7 @@ class LillyBrain(private val ctx: Context) {
                 else Reply("I don't have anything like that saved", "ऐसी कोई बात मुझे याद नहीं है", endChat = true)
             }
             Cmd.Recall -> recallReply()
+            is Cmd.RecallAbout -> recallAbout(main)
             is NavigateCmd -> navigateReply(main)
             is NearbyCmd -> nearbyReply(main.what)
             is SaveAddressCmd -> saveAddressReply(main)
@@ -546,6 +548,22 @@ class LillyBrain(private val ctx: Context) {
     }
 
     // ---------- Yaaddasht ----------
+
+    private fun recallAbout(c: Cmd.RecallAbout): Reply {
+        val keys = c.words.map { it.lowercase() } + listOf("janmdin", "janm din", "bday", "date of birth", "जन्म", "जन्मदिन")
+        val hit = memory.facts().lastOrNull { f ->
+            val x = f.text.lowercase()
+            keys.any { it != c.whose && x.contains(it) } && (c.whose == null || x.contains(c.whose))
+        }
+        if (hit != null) return Reply(hit.text, hit.text, endChat = true)
+        val who = c.whose?.let { "$it's" } ?: "your"
+        return Reply(
+            "I don't know $who date of birth yet. Tell me once: \"${if (c.whose == null) "My" else "${c.whose}'s"} date of birth is 12 June 1998\"",
+            if (c.whose == null) "मुझे आपकी जन्मतिथि अभी नहीं पता। एक बार बोलिए: मेरी डेट ऑफ़ बर्थ बारह जून उन्नीस सौ अट्ठानवे है"
+            else "मुझे ${c.whose} की जन्मतिथि अभी नहीं पता। एक बार बता दीजिए, मैं याद रख लूँगी",
+            endChat = true
+        )
+    }
 
     private fun recallReply(): Reply {
         val f = memory.facts()
