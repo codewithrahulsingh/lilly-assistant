@@ -26,6 +26,8 @@ object OfflineVoice {
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var tts: OfflineTts? = null
+    /** Pichhli baar offline awaaz kyun nahi chali — app me dikhane ke liye */
+    @Volatile var lastError: String? = null
     @Volatile private var token = 0
     @Volatile private var track: AudioTrack? = null
     private val lock = Any()
@@ -54,7 +56,10 @@ object OfflineVoice {
                     numThreads = 2
                 )
             )
-            val t = try { OfflineTts(assetManager = null, config = cfg) } catch (e: Throwable) { null }
+            val t = try { OfflineTts(assetManager = null, config = cfg) } catch (e: Throwable) {
+                lastError = "Voice engine didn't start: ${e.javaClass.simpleName} ${e.message ?: ""}".trim()
+                null
+            }
             tts = t
             return t
         }
@@ -110,8 +115,10 @@ object OfflineVoice {
                 val until = System.currentTimeMillis() + total * 1000L / sr + 1500
                 while (my == token && t.playbackHeadPosition < total && System.currentTimeMillis() < until) Thread.sleep(40)
                 ok = total > 0
+                if (ok) lastError = null else if (my == token) lastError = "The voice made no sound for this text"
             } catch (e: Throwable) {
                 ok = false
+                if (lastError == null || e.message != "no voice pack") lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}"
             } finally {
                 try { t?.stop() } catch (e: Exception) { }
                 try { t?.release() } catch (e: Exception) { }

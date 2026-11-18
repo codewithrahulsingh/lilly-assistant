@@ -428,16 +428,20 @@ class LillyService : Service() {
 
     private val realVoice by lazy { RealVoice(this) }
 
+    private fun online(): Boolean = try {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    } catch (e: Exception) { true }
+
     /** "offline" (download ki hui insaani awaaz), "gemini" (online) ya "phone" */
     private fun voiceSource(): String {
+        // Ek hi awaaz: offline insaani awaaz download ho toh hamesha wahi (Gemini wali tabhi jab ye na ho)
         val saved = prefs.getString("voice_source", null)
-        val offline = OfflineVoice.installed(this)
         return when {
-            saved == "offline" && offline -> "offline"
-            saved == "gemini" && realVoice.enabled() -> "gemini"
             saved == "phone" -> "phone"
-            offline -> "offline"
-            saved == null && realVoice.enabled() -> "gemini"
+            OfflineVoice.installed(this) -> "offline"
+            saved == "gemini" && realVoice.enabled() -> "gemini"
             else -> "phone"
         }
     }
@@ -569,7 +573,12 @@ class LillyService : Service() {
             handler.postDelayed(speakTimeout, 10_000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
             OfflineVoice.speak(this, spoken, prefs.getFloat("voice_speed", 1.0f),
                 onDone = { finishSpeaking(id) },
-                onFail = { if (currentUtterance == id) speakDevice(spoken, id) })
+                onFail = {
+                    if (currentUtterance == id) {
+                        OfflineVoice.lastError?.let { LillyBus.status("Offline voice problem: $it") }
+                        speakDevice(spoken, id)
+                    }
+                })
             return
         }
         if (src == "gemini") {
@@ -629,6 +638,8 @@ class LillyService : Service() {
         if (pref == "auto") {
             putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf(if (lang == "en-IN") "hi-IN" else "en-IN"))
         }
+        // Internet na ho toh phone ka offline speech pack use karo (Google app me download karna hota hai)
+        if (!online()) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)

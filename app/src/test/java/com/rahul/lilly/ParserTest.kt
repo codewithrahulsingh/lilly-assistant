@@ -707,3 +707,21 @@ class SameNumberTest {
         assertEquals(listOf("Kunal Bhai", "Kunal Office"), CallChoice.collapseSameNumbers(all, rows))
     }
 }
+
+class WhatsAppPhrasingTest {
+    private fun p(s: String) = Parser.parse(s)
+
+    @Test fun moreWaysToSay() {
+        assertEquals(WhatsAppCmd("nandu", "paise dal de"), p("whatsapp par nandu ko messages karo paise dal de"))
+        assertEquals(WhatsAppCmd("nandu", "paise dal de"), p("WhatsApp pe Nandu ko message karo ki paise dal de"))
+        assertEquals(WhatsAppCmd("nandu", ""), p("whatsapp par nandu ko message karo"))
+        assertEquals(WhatsAppCmd("nandu", "paise dal de"), p("Nandu ko message karo ki paise dal de"))
+        assertEquals(WhatsAppCmd("nandu", "paise dal de"), p("Nandu ko message bhejo WhatsApp pe ki paise dal de"))
+        assertEquals(WhatsAppCmd("mom", "i'm late"), p("text mom that I'm late"))
+        assertEquals(WhatsAppCmd("nandu", ""), p("nandu ko message karo"))
+        assertEquals(WhatsAppCmd("nandu", "paise dal de"), p("send a whatsapp to nandu saying paise dal de"))
+        // Purane na tootein
+        assertEquals(Cmd.Call("rohit"), p("Rohit ko call karo"))
+        assertEquals(Cmd.OpenApp("messages"), p("messages kholo"))
+    }
+}

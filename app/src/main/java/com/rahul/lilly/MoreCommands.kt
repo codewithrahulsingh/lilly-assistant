@@ -34,13 +34,14 @@ data class SettingCmd(val what: String, val value: String) : Cmd()
 object MoreCommands {
 
     fun parse(t: String): Cmd? =
-        whatsapp(t) ?: address(t) ?: navigation(t) ?: notifications(t) ?: routine(t) ?: weather(t) ?: settings(t)
+        whatsapp(t) ?: plainMessage(t) ?: address(t) ?: navigation(t) ?: notifications(t) ?: routine(t) ?: weather(t) ?: settings(t)
 
     // ---------------- WhatsApp ----------------
 
     private const val WA = """(?:whatsapp|whats app|watsapp|wats app|whatsap)"""
     private const val ON = """(?:pe|par|per|me|mein|on|se)"""
-    private const val SAY = """(?:bolo|bol do|boldo|likho|likh do|message karo|message kar do|msg karo|msg kar do|bhejo|bhej do|send karo|send kar do|keh do|kah do|batao|bata do)"""
+    private const val MSG = """(?:message|messages|msg|msgs|massage|mesej|text|sms)"""
+    private const val SAY = """(?:bolo|bol do|boldo|likho|likh do|$MSG karo|$MSG kar do|$MSG kardo|$MSG bhejo|$MSG bhej do|$MSG send karo|bhejo|bhej do|send karo|send kar do|keh do|kah do|batao|bata do)"""
 
     private fun cleanTarget(s: String): String {
         var n = s.trim()
@@ -68,12 +69,18 @@ object MoreCommands {
             val who = cleanTarget(m.groupValues[1])
             if (who.isNotBlank()) return WhatsAppCmd(who, kind = kind)
         }
+        // "WhatsApp par Nandu ko messages karo paise dal de" (WhatsApp pehle, naam baad me)
+        Regex("""^$WA\s+(?:$ON\s+)?(.+?)\s+ko\s+(?:$SAY|$MSG)\s*(?:ki\s+|that\s+)?(.*)$""").find(t)?.let { m ->
+            val who = cleanTarget(m.groupValues[1])
+            if (who.isNotBlank()) return WhatsAppCmd(who, cleanText(m.groupValues[2]), "msg")
+        }
         // Message ke saath text
         val msgPatterns: List<Pair<Regex, Boolean>> = listOf( // Boolean: text pehle group me?
             Regex("""^(?:send\s+(?:a\s+)?)?$WA\s+(?:message\s+|msg\s+|text\s+)?(?:to\s+)?(.+?)\s+(?:saying|that|ki)\s+(.+)$""") to false,
             Regex("""^(?:send|text|message|tell|msg)\s+(.+?)\s+(?:on|in|through|via)\s+$WA\s+(?:saying\s+|that\s+)?(.+)$""") to false,
             Regex("""^(.+?)\s+ko\s+$WA\s+(?:$ON\s+)?$SAY\s+(?:ki\s+)?(.+)$""") to false,
-            Regex("""^(.+?)\s+ko\s+$WA\s+(?:$ON\s+)?(?:message|msg)\s+(?:karo|bhejo|kar do|bhej do)\s+(?:ki\s+)?(.+)$""") to false,
+            Regex("""^(.+?)\s+ko\s+$WA\s+(?:$ON\s+)?$MSG\s+(?:karo|bhejo|kar do|bhej do)\s+(?:ki\s+)?(.+)$""") to false,
+            Regex("""^(.+?)\s+ko\s+(?:$SAY|$MSG)\s+$WA\s+(?:$ON\s+)?(?:ki\s+)?(.+)$""") to false,
             Regex("""^(.+?)\s+ko\s+$WA\s+(?:$ON\s+)?(.+?)\s+$SAY$""") to false
         )
         for ((re, _) in msgPatterns) {
@@ -92,6 +99,26 @@ object MoreCommands {
             val m = re.find(t) ?: continue
             val who = cleanTarget(m.groupValues[1])
             if (who.isNotBlank()) return WhatsAppCmd(who, "", "msg")
+        }
+        return null
+    }
+
+    /**
+     * WhatsApp shabd ke bina: "Nandu ko message karo ki paise dal de" / "text mom that I'm late" —
+     * India me "message" ka matlab aksar WhatsApp hi hota hai.
+     */
+    private fun plainMessage(t: String): Cmd? {
+        Regex("""^(.+?)\s+ko\s+$SAY\s+(?:ki\s+|that\s+)(.+)$""").find(t)?.let { m ->
+            val who = cleanTarget(m.groupValues[1])
+            if (who.isNotBlank()) return WhatsAppCmd(who, cleanText(m.groupValues[2]), "msg")
+        }
+        Regex("""^(.+?)\s+ko\s+$MSG\s+(?:karo|kar do|bhejo|bhej do)$""").find(t)?.let { m ->
+            val who = cleanTarget(m.groupValues[1])
+            if (who.isNotBlank()) return WhatsAppCmd(who, "", "msg")
+        }
+        Regex("""^(?:send\s+(?:a\s+)?)?(?:message|text|msg)\s+(?:to\s+)?(.+?)\s+(?:saying|that)\s+(.+)$""").find(t)?.let { m ->
+            val who = cleanTarget(m.groupValues[1])
+            if (who.isNotBlank()) return WhatsAppCmd(who, cleanText(m.groupValues[2]), "msg")
         }
         return null
     }

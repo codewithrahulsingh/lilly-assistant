@@ -222,6 +222,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r12 = row(col)
         ai2Value = card(r12, "🔌", "Second AI (freemodel etc.)") { ai2Setup() }
+        card(r12, "📴", "Use without internet") { offlineHelp() }.text = "What works offline + setup"
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -242,7 +243,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
         val src = prefs.getString("voice_source", null)
         realValue.text = when {
-            OfflineVoice.installed(this) && src != "gemini" && src != "phone" -> "ON ✓ Offline human voice"
+            OfflineVoice.installed(this) && src != "phone" && OfflineVoice.lastError != null -> "⚠️ Problem — tap to see"
+            OfflineVoice.installed(this) && src != "phone" -> "ON ✓ One human voice, works offline"
+            !OfflineVoice.installed(this) -> "Tap to download Lilly's human voice"
             src == "phone" -> "Phone voice"
             key.isBlank() || key.startsWith("sk-ant-") -> "Tap to get a human voice"
             rv == RealVoice.OFF -> "Phone voice"
@@ -540,7 +543,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setTitle("🎤 Lilly's voice")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> if (has) useVoice("offline") else downloadOfflineVoice()
+                    0 -> if (has) testOfflineVoice() else downloadOfflineVoice()
                     1 -> { prefs.edit().putString("voice_source", "gemini").apply(); chooseGeminiVoice() }
                     else -> useVoice("phone")
                 }
@@ -553,6 +556,22 @@ class MainActivity : Activity(), LillyBus.Ui {
                 }
             }
             .show()
+    }
+
+    /** App me hi offline awaaz suna do; na chale toh asli wajah dikhao */
+    private fun testOfflineVoice() {
+        prefs.edit().putString("voice_source", "offline").apply()
+        refreshCards()
+        android.widget.Toast.makeText(this, "Lilly is speaking…", android.widget.Toast.LENGTH_SHORT).show()
+        OfflineVoice.speak(this, "नमस्ते राहुल, मैं लिली हूँ। अब मैं हमेशा इसी आवाज़ में बात करूँगी।", 1.0f,
+            onDone = { refreshCards() },
+            onFail = {
+                refreshCards()
+                AlertDialog.Builder(this).setTitle("Offline voice didn't play ✗")
+                    .setMessage("Reason:\n${OfflineVoice.lastError ?: "unknown"}\n\nPlease send a screenshot of this.")
+                    .setPositiveButton("Download again") { _, _ -> downloadOfflineVoice() }
+                    .setNegativeButton("Close", null).show()
+            })
     }
 
     private fun useVoice(src: String) {
@@ -575,9 +594,9 @@ class MainActivity : Activity(), LillyBus.Ui {
                 try { d.dismiss() } catch (e: Exception) { }
                 if (isFinishing) return@download
                 if (ok) {
-                    useVoice("offline")
+                    testOfflineVoice()
                     AlertDialog.Builder(this).setTitle("Done ✓")
-                        .setMessage("Lilly now always speaks in the same human voice, even without internet. Listen to her now.")
+                        .setMessage("Lilly now always speaks in this one human voice, even without internet.")
                         .setPositiveButton("OK", null).show()
                 } else {
                     AlertDialog.Builder(this).setTitle("Download didn't finish ✗")
@@ -886,6 +905,39 @@ class MainActivity : Activity(), LillyBus.Ui {
             .show()
     }
 
+    /** Ek baar poochho: insaani awaaz download karein? (Gemini wali baar-baar badalti hai) */
+    private fun offerOfflineVoice() {
+        if (OfflineVoice.installed(this) || prefs.getBoolean("offline_voice_offered", false)) return
+        prefs.edit().putBoolean("offline_voice_offered", true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("🎤 Give Lilly one fixed human voice?")
+            .setMessage(
+                "Right now Lilly's online voice switches to the phone's robot voice when the internet is slow or the free limit is used up.\n\n" +
+                    "Download her offline human voice once (about ${OfflineVoice.PACK_MB} MB) and she will always speak in that same voice — no internet, no limit."
+            )
+            .setPositiveButton("Download") { _, _ -> downloadOfflineVoice() }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun offlineHelp() {
+        AlertDialog.Builder(this)
+            .setTitle("📴 Use Lilly without internet")
+            .setMessage(
+                "Works offline: \"Lilly\" wake word, calls, apps, alarms, timers, torch, volume, time, battery, settings, and the offline human voice.\n\n" +
+                    "Needs internet: AI answers, weather, WhatsApp sending, maps, YouTube.\n\n" +
+                    "To understand your commands without internet, the phone needs Google's offline speech packs:\n" +
+                    "1. Tap \"Open\" below (or Settings → Google → Voice)\n" +
+                    "2. Offline speech recognition → download Hindi (India) and English (India)\n\n" +
+                    "Lilly switches to them automatically when there's no internet."
+            )
+            .setPositiveButton("Open") { _, _ ->
+                if (!tryStart(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))) tryStart(Intent(Settings.ACTION_SETTINGS))
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     private fun learner() = Learner(
         load = { prefs.getString("learned", null) },
         save = { prefs.edit().putString("learned", it).apply() }
@@ -1076,6 +1128,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         LillyBus.launcher = myLauncher
         // Nayi version aayi ho toh batao (6 ghante me ek baar, chupchaap)
         Updater.check(this, userAsked = false) { refreshCards() }
+        offerOfflineVoice()
         status.text = LillyBus.lastStatus.ifBlank { "Starting up…" }
         heard.text = LillyBus.lastHeard
         orb.state = LillyBus.lastOrb
