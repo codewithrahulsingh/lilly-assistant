@@ -80,13 +80,13 @@ class VoicePrint(
 
 /** Jaagne ka faisla: ek baar thoda kam aaye aur turant dobara "Lilly" bolo toh thodi chhoot */
 class WakeGate(private val now: () -> Long = { System.currentTimeMillis() }) {
-    private var nearMissAt = 0L
+    private var nearMissAt = -1L
 
     fun decide(score: Float, level: String): Boolean {
         val th = VoicePrint.threshold(level)
-        if (score >= th) { nearMissAt = 0; return true }
+        if (score >= th) { nearMissAt = -1; return true }
         val t = now()
-        if (nearMissAt > 0 && t - nearMissAt < 6000 && score >= th - 0.06f) { nearMissAt = 0; return true }
+        if (nearMissAt >= 0 && t - nearMissAt < 6000 && score >= th - 0.06f) { nearMissAt = -1; return true }
         if (score >= th - 0.10f) nearMissAt = t
         return false
     }
