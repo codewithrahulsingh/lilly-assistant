@@ -1274,22 +1274,24 @@ class LillyBrain(private val ctx: Context) {
         val shown = query.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } }
 
         // Jo app bola wahi; na bola ho toh jo aapne pichhli baar khud chuna tha
-        val want = app.ifBlank { learner.musicApp ?: "" }
+        val want = app.ifBlank { prefs.getString("music_app", null)?.takeIf { it.isNotBlank() } ?: learner.musicApp ?: "" }
         val remember = { if (app.isNotBlank()) learner.setMusicApp(app) }
 
+        // Doosre music apps (jo naam se bola, ya pehle chuna tha)
+        otherMusicApps[want]?.let { (pkg, label) ->
+            if (installed(pkg)) return if (want == "ytmusic") ytMusicReply(query, shown, remember) else Reply("Playing $shown on $label", "$label पर $shown चला रही हूँ", {
+                remember()
+                openExternal(searchIntent(query).setPackage(pkg), label)
+            }, endChat = true)
+            if (app.isNotBlank()) return Reply("$label isn't installed on this phone", "इस फ़ोन में $label नहीं है", endChat = true, failed = true)
+        }
         if (want == "spotify" && installed(spotify)) return spotifyReply(query, shown, remember)
         if (want == "youtube" && installed(youtube)) return youtubeReply(query, shown, remember, asVideo = app == "youtube")
         if (app == "spotify") {
             return Reply("Spotify isn't installed on this phone", "इस फ़ोन में स्पॉटिफाई नहीं है", endChat = true, failed = true)
         }
         if (installed(youtube)) return youtubeReply(query, shown, remember)
-        if (installed(ytMusic)) {
-            // YouTube Music ye intent milte hi gaana chala deta hai
-            val i = searchIntent(query).setPackage(ytMusic)
-            return Reply("Playing $shown on YouTube Music", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
-                openExternal(i, "YouTube Music")
-            }, endChat = true)
-        }
+        if (installed(ytMusic)) return ytMusicReply(query, shown, remember)
         if (installed(spotify)) return spotifyReply(query, shown, remember)
         val i = searchIntent(query)
         if (i.resolveActivity(ctx.packageManager) != null) {
@@ -1297,6 +1299,30 @@ class LillyBrain(private val ctx: Context) {
         }
         return Reply("Please install Spotify or YouTube to play songs", "गाना चलाने के लिए स्पॉटिफाई इंस्टॉल कीजिए", endChat = true, failed = true)
     }
+
+    /** app code -> (package, naam) */
+    private val otherMusicApps = mapOf(
+        "ytmusic" to ("com.google.android.apps.youtube.music" to "YouTube Music"),
+        "jiosaavn" to ("com.jio.media.jiobeats" to "JioSaavn"),
+        "wynk" to ("com.bsbportal.music" to "Wynk Music"),
+        "gaana" to ("com.gaana" to "Gaana"),
+        "amazon" to ("com.amazon.mp3" to "Amazon Music"),
+        "apple" to ("com.apple.android.music" to "Apple Music")
+    )
+
+    /** YouTube Music: pehle gaane ki video ID dhoondo, seedha wahi chalao (bina helper, bina tap) */
+    private fun ytMusicReply(query: String, shown: String, remember: () -> Unit): Reply =
+        Reply("Playing $shown on YouTube Music", "यूट्यूब म्यूज़िक पर $shown चला रही हूँ", {
+            remember()
+            Thread {
+                val id = MusicControl.firstYouTubeVideo("$query song")
+                Handler(Looper.getMainLooper()).post {
+                    val i = if (id != null) Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/watch?v=$id")).setPackage(ytMusic)
+                    else searchIntent(query).setPackage(ytMusic)
+                    openExternal(i, "YouTube Music")
+                }
+            }.start()
+        }, endChat = true)
 
     private fun searchIntent(query: String) = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
         .putExtra(SearchManager.QUERY, query)
@@ -1320,13 +1346,19 @@ class LillyBrain(private val ctx: Context) {
 
     private fun spotifyWithoutTap(query: String, shown: String, remember: () -> Unit): Reply =
         Reply(
-            "Searching $shown on Spotify. To start songs automatically, turn on “Spotify auto-play” in the Lilly app",
+            "Playing $shown on Spotify. If it only shows the search, tap the song once — or set YouTube Music as your music app for hands-free play",
             "स्पॉटिफाई पर $shown ढूँढ रही हूँ", {
             remember()
             val i = searchIntent(query).setPackage(spotify)
-            openExternal(i, "Spotify")
             val h = Handler(Looper.getMainLooper())
-            for (delay in listOf(3500L, 7500L)) {
+            // Spotify band ho toh "play from search" sirf search dikhata hai — pehle Spotify jagao, phir bhejo
+            val running = audio.isMusicActive
+            val launch = ctx.packageManager.getLaunchIntentForPackage(spotify)
+            if (!running && launch != null) {
+                openExternal(launch, "Spotify")
+                h.postDelayed({ try { ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { openExternal(Intent(i), "Spotify") } }, 2500)
+            } else openExternal(i, "Spotify")
+            for (delay in listOf(5500L, 9000L)) {
                 h.postDelayed({
                     if (!audio.isMusicActive && Settings.canDrawOverlays(ctx)) {
                         try { ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) { }

@@ -49,6 +49,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var ai2Value: TextView
     private lateinit var matchValue: TextView
     private lateinit var abuseValue: TextView
+    private lateinit var musicValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -234,6 +235,10 @@ class MainActivity : Activity(), LillyBus.Ui {
         abuseValue = card(r13, "🤬", "Gaali mode") { abuseSetup() }
         card(r13, "🗣", "Spellings") { showSpellings() }.text = "Words Lilly auto-corrects"
 
+        val r14 = row(col)
+        musicValue = card(r14, "🎵", "Music app") { chooseMusicApp() }
+        card(r14, "▶️", "Which apps play by voice") { musicHelp() }.text = "No helper needed"
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -275,6 +280,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        musicValue.text = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.second?.let { "$it" } ?: "Auto (last one you used)"
         abuseValue.text = if (prefs.getBoolean("abuse_mode", false)) "ON 😈 swears back at you" else "OFF — polite replies"
         matchValue.text = when {
             VoiceMatch.active(this) -> "ON ✓ wakes only for you (" + VoiceMatch.level(this).replaceFirstChar { it.uppercase() } + ")"
@@ -1396,6 +1402,43 @@ class MainActivity : Activity(), LillyBus.Ui {
                 android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    /** (code, naam, package) — Lilly inme gaana chala sakti hai */
+    private val musicApps = listOf(
+        Triple("", "Auto (last one you used)", ""),
+        Triple("ytmusic", "YouTube Music ⭐ plays hands-free", "com.google.android.apps.youtube.music"),
+        Triple("youtube", "YouTube ⭐ plays hands-free", "com.google.android.youtube"),
+        Triple("spotify", "Spotify", "com.spotify.music"),
+        Triple("jiosaavn", "JioSaavn", "com.jio.media.jiobeats"),
+        Triple("wynk", "Wynk Music", "com.bsbportal.music"),
+        Triple("gaana", "Gaana", "com.gaana"),
+        Triple("amazon", "Amazon Music", "com.amazon.mp3"),
+        Triple("apple", "Apple Music", "com.apple.android.music")
+    ).map { Triple(it.first, it.second, it.third) }
+
+    private fun isInstalled(pkg: String) = pkg.isBlank() || try { packageManager.getPackageInfo(pkg, 0); true } catch (e: Exception) { false }
+
+    private fun chooseMusicApp() {
+        val list = musicApps.filter { isInstalled(it.third) }
+        val cur = prefs.getString("music_app", "") ?: ""
+        AlertDialog.Builder(this).setTitle("🎵 Play songs in")
+            .setSingleChoiceItems(list.map { it.second }.toTypedArray(), list.indexOfFirst { it.first == cur }.coerceAtLeast(0)) { d, w ->
+                prefs.edit().putString("music_app", list[w].first).apply()
+                refreshCards(); d.dismiss()
+            }.show()
+    }
+
+    private fun musicHelp() {
+        AlertDialog.Builder(this).setTitle("▶️ Playing songs by voice")
+            .setMessage(
+                "Without any helper or permission:\n\n" +
+                    "✅ YouTube Music — finds the song and starts it directly\n" +
+                    "✅ YouTube — opens the exact video and plays\n" +
+                    "🟡 Spotify — Lilly opens Spotify first, then asks it to play. Many phones play; some only show the search (Spotify's own limit for other apps)\n" +
+                    "🟡 JioSaavn / Wynk / Gaana / Amazon / Apple Music — uses Android's standard \"play from search\"; works if the app supports it\n\n" +
+                    "Say: \"YouTube Music par Kesariya chalao\", \"JioSaavn pe Arijit ke gaane\", or pick a Music app here and just say \"Kesariya chalao\"."
+            ).setPositiveButton("OK", null).show()
     }
 
     private fun abuseSetup() {

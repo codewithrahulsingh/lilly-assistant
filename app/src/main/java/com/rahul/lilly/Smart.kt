@@ -20,8 +20,21 @@ object Smart {
     )
 
     private val waWord = Regex("""\b(whatsapp|whatsap|watsapp|watsap|whats app|wa)\b""")
-    private val musicWord = Regex("""\b(spotify|youtube|gaana|gana|gaane|gane|song|songs|music|bajao|bajado|sunao|playlist)\b""")
-    private val appWord = Regex("""\b(spotify|youtube|yt)\b""")
+    private val musicWord = Regex("""\b(spotify|youtube|gaana|gana|gaane|gane|song|songs|music|bajao|bajado|sunao|playlist|saavn|jiosaavn|wynk)\b""")
+    private val appWord = Regex("""\b(spotify|youtube music|yt music|youtube|yt|jio ?saavn|saavn|wynk(?: music)?|gaana app|amazon music|apple music)\b""")
+
+    /** Kaunsa music app bola: ytmusic / jiosaavn / wynk / gaana / amazon / apple / youtube / spotify / "" */
+    fun musicApp(t: String): String = when {
+        Regex("""\b(youtube music|yt music|you tube music)\b""").containsMatchIn(t) -> "ytmusic"
+        Regex("""\b(jio ?saavn|saavn|savan app)\b""").containsMatchIn(t) -> "jiosaavn"
+        Regex("""\bwynk\b""").containsMatchIn(t) -> "wynk"
+        Regex("""\bgaana app\b""").containsMatchIn(t) -> "gaana"
+        Regex("""\bamazon music\b""").containsMatchIn(t) -> "amazon"
+        Regex("""\bapple music\b""").containsMatchIn(t) -> "apple"
+        Regex("""\b(youtube|yt)\b""").containsMatchIn(t) -> "youtube"
+        Regex("""\bspotify\b""").containsMatchIn(t) -> "spotify"
+        else -> ""
+    }
 
     /** Shuru aur aakhir ke bhar-ti shabd hatao, beech ke gaane/naam ke shabd chhodo */
     fun edgeStrip(s: String): String {
@@ -45,17 +58,13 @@ object Smart {
     private fun music(t: String, c: Cmd): Cmd? {
         // Gaana roko / agla / awaaz — inhe mat chhedo
         if (c is Cmd.Media || c is Cmd.Volume || c is Cmd.Chat || c is Cmd.Alarm || c is Cmd.Timer) return null
-        if (c is Cmd.OpenApp && !Regex("""\b(aur|and|then|phir|fir)\b""").containsMatchIn(t)) return null
-        val app = when {
-            Regex("""\b(youtube|yt)\b""").containsMatchIn(t) -> "youtube"
-            Regex("""\bspotify\b""").containsMatchIn(t) -> "spotify"
-            else -> ""
-        }
+        if (c is Cmd.OpenApp && musicApp(t).isBlank() && !Regex("""\b(aur|and|then|phir|fir)\b""").containsMatchIn(t)) return null
+        val app = musicApp(t)
         if (c is Cmd.PlayMusic) {
             // Parser ka gaana saaf hai (app ke shabd nahi) toh wahi
             if (!appWord.containsMatchIn(c.query) && !Regex("""\b(kholo|open|aur|and)\b""").containsMatchIn(c.query)) {
                 val q = edgeStrip(c.query) // "accha sa gaana" -> koi bhi gaana
-                return c.copy(query = q, app = c.app.ifBlank { app })
+                return c.copy(query = q, app = if (app.isNotBlank() && app !in setOf("youtube", "spotify")) app else c.app.ifBlank { app })
             }
         } else if (c !is Cmd.Unknown && c !is Cmd.OpenApp) return null
         // "spotify kholo aur kesariya bajao" -> "aur" ke baad wala hissa
@@ -63,6 +72,7 @@ object Smart {
         Regex("""\b(?:kholo|khol do|open|start|chalu karo)\b.*?\b(?:aur|and|then|phir|fir)\b\s*(.+)""").find(t)?.let { rest = it.groupValues[1] }
         rest = rest.replace(appWord, " ").replace(Regex("""\s+"""), " ").trim()
         val q = edgeStrip(rest)
+        if (q.isBlank() && c is Cmd.OpenApp) return null // "spotify kholo" = sirf app kholo
         return Cmd.PlayMusic(q, app)
     }
 

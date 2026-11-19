@@ -855,3 +855,11 @@ class MishearTest {
         org.junit.Assert.assertTrue(Parser.parse("kal 5 baje alarm") is Cmd.Alarm)
     }
 }
+
+class MusicAppsTest {
+    @org.junit.Test fun apps() {
+        org.junit.Assert.assertEquals(Cmd.PlayMusic("kesariya", "ytmusic"), Parser.parse("youtube music par kesariya chalao"))
+        org.junit.Assert.assertEquals(Cmd.PlayMusic("tum hi ho", "jiosaavn"), Parser.parse("jiosaavn pe tum hi ho bajao"))
+        org.junit.Assert.assertEquals(Cmd.OpenApp("spotify"), Parser.parse("spotify kholo"))
+    }
+}
