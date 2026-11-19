@@ -182,7 +182,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r1 = row(col)
         lockValue = card(r1, "🔒", "Lock screen call") { chooseLockMode() }
-        card(r1, "🎙", "Choose voice") { chooseGeminiVoice() }
+        card(r1, "🎙", "Choose voice") { chooseRealVoice() }
             .text = "Pick one — it stays fixed"
 
         val r2 = row(col)
@@ -253,6 +253,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
         val src = prefs.getString("voice_source", null)
         realValue.text = when {
+            src == "cartesia" && !prefs.getString("cartesia_key", "").isNullOrBlank() -> {
+                val lines = CommonLines.ALL.map { if (prefs.getBoolean("cartesia_male", false)) Persona.masculine(it) else it }.distinct()
+                val n = RealVoice(this).keptCount(lines)
+                "🔒 ${prefs.getString("cartesia_name", "Cartesia")} (Cartesia) — ${n * 100 / lines.size.coerceAtLeast(1)}% lines saved"
+            }
             src == "gemini" && !(key.isBlank() || key.startsWith("sk-ant-")) && rv != RealVoice.OFF -> {
                 val lines = CommonLines.ALL.map { if (RealVoice.isMale(rv)) Persona.masculine(it) else it }.distinct()
                 val n = RealVoice(this).keptCount(lines)
@@ -555,17 +560,20 @@ class MainActivity : Activity(), LillyBus.Ui {
     /** Awaaz kahan se: offline (hamesha same) / Gemini (online) / phone */
     private fun chooseRealVoice() {
         val cur = OfflineVoice.chosen(this)
+        val cn = if (prefs.getString("voice_source", null) == "cartesia") prefs.getString("cartesia_name", null) else null
         val labels = arrayOf(
-            "Offline voices — Priyamvada (girl) / Pratham (boy), no internet" + (cur?.let { " · ${it.name} downloaded" } ?: ""),
-            "⭐ Gemini human voices — girl or boy, Hindi + English + Hinglish, stays fixed",
+            "⭐ Cartesia voices — Siya & 30+ Hindi/Hinglish voices" + (cn?.let { " · now: $it" } ?: ""),
+            "Gemini human voices (paused for now)",
+            "Offline voices — Priyamvada / Pratham (paused for now)" + (cur?.let { " · ${it.name} downloaded" } ?: ""),
             "Phone voice — the phone's own text-to-speech"
         )
         AlertDialog.Builder(this)
             .setTitle("🎤 Lilly's voice")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> pickOfflineVoice()
+                    0 -> cartesiaSetup()
                     1 -> chooseGeminiVoice()
+                    2 -> pickOfflineVoice()
                     else -> useVoice("phone")
                 }
             }
@@ -722,6 +730,115 @@ class MainActivity : Activity(), LillyBus.Ui {
                 ).setPositiveButton("OK", null).show()
             }
             .show()
+    }
+
+    // ---------------- Cartesia (Siya…) ----------------
+
+    private fun cartesiaSetup() {
+        val key = prefs.getString("cartesia_key", "") ?: ""
+        if (key.isBlank()) { askCartesiaKey(); return }
+        val wait = AlertDialog.Builder(this).setTitle("Loading Hindi voices…").setMessage("Getting the list from Cartesia").show()
+        Thread {
+            val voices = ArrayList<org.json.JSONObject>()
+            var err = ""
+            try {
+                var after: String? = null
+                for (page in 0 until 3) {
+                    val path = "/voices?language=hi&limit=100" + (after?.let { "&starting_after=$it" } ?: "")
+                    val (code, bytes, e) = RealVoice.cartesiaCall(key.trim(), path, null)
+                    if (code !in 200..299 || bytes == null) { err = "HTTP $code $e"; break }
+                    val o = org.json.JSONObject(String(bytes))
+                    val arr = o.optJSONArray("data") ?: break
+                    for (i in 0 until arr.length()) voices.add(arr.getJSONObject(i))
+                    if (!o.optBoolean("has_more", false)) break
+                    after = o.optString("next_page").ifBlank { null } ?: break
+                }
+            } catch (e: Exception) { err = e.message ?: e.javaClass.simpleName }
+            runOnUiThread {
+                try { wait.dismiss() } catch (e: Exception) { }
+                if (isFinishing) return@runOnUiThread
+                if (voices.isEmpty()) {
+                    AlertDialog.Builder(this).setTitle("Couldn't load voices ✗")
+                        .setMessage("Reason: ${err.ifBlank { "no Hindi voices returned" }}\n\nIf it says 401/403, the key is wrong — paste it again.")
+                        .setPositiveButton("Change key") { _, _ -> askCartesiaKey() }
+                        .setNegativeButton("Close", null).show()
+                    return@runOnUiThread
+                }
+                // Siya (aapki bookmark) sabse upar, phir ladkiyan, phir ladke
+                val sorted = voices.sortedWith(compareBy(
+                    { if (it.optString("name").contains("siya", true)) 0 else 1 },
+                    { if (it.optString("gender") == "feminine") 0 else 1 },
+                    { it.optString("name") }
+                ))
+                val cur = prefs.getString("cartesia_voice", null)
+                val labels = sorted.map { v ->
+                    val g = if (v.optString("gender") == "masculine") "👨" else "👩"
+                    val lock = if (v.optString("id") == cur && prefs.getString("voice_source", null) == "cartesia") "🔒 " else ""
+                    val d = v.optString("description").take(60)
+                    "$lock$g ${v.optString("name")}" + if (d.isNotBlank()) " — $d" else ""
+                }.toTypedArray()
+                AlertDialog.Builder(this).setTitle("Cartesia Hindi voices (tap to hear)")
+                    .setItems(labels) { _, w ->
+                        val v = sorted[w]
+                        previewCartesia(v.optString("id"), v.optString("name"), v.optString("gender") == "masculine")
+                    }
+                    .setNeutralButton("Change key") { _, _ -> askCartesiaKey() }
+                    .setNegativeButton("Close", null).show()
+            }
+        }.start()
+    }
+
+    private fun askCartesiaKey() {
+        val input = android.widget.EditText(this).apply {
+            hint = "sk_car_…"
+            setSingleLine()
+            setText(prefs.getString("cartesia_key", ""))
+        }
+        val box = LinearLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+        AlertDialog.Builder(this).setTitle("Cartesia API key")
+            .setMessage("1. Open play.cartesia.ai/keys (you're already logged in)\n2. Create a new key and copy it\n3. Paste it here\n\nThe key stays only on this phone.")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val k = input.text.toString().filter { !it.isWhitespace() }
+                prefs.edit().putString("cartesia_key", k).apply()
+                if (k.isNotBlank()) cartesiaSetup()
+            }
+            .setNeutralButton("Open keys page") { _, _ -> tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.cartesia.ai/keys"))) }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun previewCartesia(id: String, name: String, male: Boolean) {
+        preview?.stop()
+        val rv = RealVoice(this)
+        preview = rv
+        android.widget.Toast.makeText(this, "Loading $name…", android.widget.Toast.LENGTH_SHORT).show()
+        val line = if (male) "हाय राहुल, मैं $name हूँ। आपका हर काम मैं फटाफट कर दूँगा। Hi Rahul, kaisi lagi meri awaaz?"
+        else "हाय राहुल, मैं $name हूँ। आपका हर काम मैं फटाफट कर दूँगी। Hi Rahul, kaisi lagi meri awaaz?"
+        rv.speak(line,
+            onDone = {
+                if (isFinishing || preview !== rv) return@speak
+                AlertDialog.Builder(this).setTitle("Keep $name?")
+                    .setMessage("Lilly will always speak in this voice" + (if (male) " and talk like a boy." else " and talk like a girl.") +
+                        "\n\nGemini and offline voices stay paused. If Cartesia fails (no internet / credits over), the phone's voice fills in.")
+                    .setPositiveButton("Keep $name 🔒") { _, _ ->
+                        prefs.edit().putString("cartesia_voice", id).putString("cartesia_name", name)
+                            .putBoolean("cartesia_male", male).putString("voice_source", "cartesia").apply()
+                        refreshCards()
+                        sendToEngine(LillyService.ACTION_TEST_VOICE)
+                        android.widget.Toast.makeText(this, "$name is now Lilly's voice 🔒", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    .setNeutralButton("Hear again") { _, _ -> previewCartesia(id, name, male) }
+                    .setNegativeButton("Try another") { _, _ -> cartesiaSetup() }
+                    .show()
+            },
+            onFallback = {
+                if (isFinishing || preview !== rv) return@speak
+                AlertDialog.Builder(this).setTitle("$name didn't load ✗")
+                    .setMessage("Reason:\n${RealVoice.lastError ?: "unknown"}\n\nPlease send a screenshot of this.")
+                    .setPositiveButton("Change key") { _, _ -> askCartesiaKey() }
+                    .setNegativeButton("Close", null).show()
+            },
+            waitMs = 25_000L, force = true, voiceName = id)
     }
 
     /** Gemini awaaz pakki karo + bachav wali offline awaaz offer karo */

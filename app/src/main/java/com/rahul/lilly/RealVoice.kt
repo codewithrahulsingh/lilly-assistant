@@ -45,6 +45,45 @@ class RealVoice(private val ctx: Context) {
         )
 
         fun isMale(name: String) = VOICES.firstOrNull { it.name == name }?.male == true
+
+        /** Cartesia ki awaaz ki ID UUID jaisi hoti hai (Gemini ki sirf naam) */
+        fun isCartesia(voice: String) = voice.length >= 30 && voice.count { it == '-' } >= 3
+
+        private const val CARTESIA = "https://api.cartesia.ai"
+        private val CARTESIA_VERSIONS = listOf("2026-08-14", "2026-03-01", "2025-04-16")
+        @Volatile private var goodVersion: String? = null
+
+        /** Cartesia se HTTP (sahi API version khud dhoondh leta hai). Returns (code, bytes, errorText) */
+        fun cartesiaCall(key: String, path: String, body: String?): Triple<Int, ByteArray?, String> {
+            val versions = listOfNotNull(goodVersion) + CARTESIA_VERSIONS.filter { it != goodVersion }
+            var last = Triple(0, null as ByteArray?, "")
+            for (v in versions) {
+                val c = URL(CARTESIA + path).openConnection() as HttpURLConnection
+                try {
+                    c.connectTimeout = 6000
+                    c.readTimeout = 20000
+                    c.setRequestProperty("Authorization", "Bearer $key")
+                    c.setRequestProperty("X-API-Key", key)
+                    c.setRequestProperty("Cartesia-Version", v)
+                    if (body != null) {
+                        c.requestMethod = "POST"
+                        c.doOutput = true
+                        c.setRequestProperty("Content-Type", "application/json")
+                        c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    }
+                    val code = c.responseCode
+                    if (code in 200..299) {
+                        goodVersion = v
+                        return Triple(code, c.inputStream.use { it.readBytes() }, "")
+                    }
+                    val err = try { c.errorStream?.bufferedReader()?.use { it.readText() } ?: "" } catch (e: Exception) { "" }
+                    last = Triple(code, null, err.take(200))
+                    // Sirf version ki galti ho toh agla version try karo
+                    if (!(code == 400 && err.contains("version", true))) return last
+                } finally { c.disconnect() }
+            }
+            return last
+        }
         const val DEFAULT = "Sulafat"
         const val OFF = "off"
 
@@ -70,15 +109,22 @@ class RealVoice(private val ctx: Context) {
     private var player: MediaPlayer? = null
     private var token = 0
 
-    val voice: String get() = prefs.getString("real_voice", DEFAULT) ?: DEFAULT
+    /** Cartesia chuni ho toh uski voice ID (UUID), warna Gemini ki awaaz ka naam */
+    val voice: String get() =
+        if (prefs.getString("voice_source", null) == "cartesia") prefs.getString("cartesia_voice", "") ?: ""
+        else prefs.getString("real_voice", DEFAULT) ?: DEFAULT
     private val key: String get() = (prefs.getString("ai_key", "") ?: "").filter { !it.isWhitespace() }
+    private val cartesiaKey: String get() = (prefs.getString("cartesia_key", "") ?: "").filter { !it.isWhitespace() }
 
-    /** Real awaaz chalu hai aur Gemini key hai */
-    fun enabled(): Boolean = voice != OFF && key.isNotEmpty() && !key.startsWith("sk-ant-")
+    /** Real awaaz chalu hai aur key hai (Cartesia ya Gemini) */
+    fun enabled(): Boolean =
+        if (isCartesia(voice)) cartesiaKey.isNotEmpty()
+        else voice != OFF && key.isNotEmpty() && !key.startsWith("sk-ant-")
 
-    fun label(): String = if (enabled()) "Real voice: $voice" else "Phone voice"
+    fun label(): String = if (!enabled()) "Phone voice"
+        else if (isCartesia(voice)) "Cartesia: ${prefs.getString("cartesia_name", "voice")}" else "Real voice: $voice"
 
-    fun isMale(): Boolean = isMale(voice)
+    fun isMale(): Boolean = if (isCartesia(voice)) prefs.getBoolean("cartesia_male", false) else isMale(voice)
 
     /** Kitni pakki lines ban chuki (x / total) */
     fun keptCount(lines: List<String>): Int = lines.count { keepFile(voice, it).exists() }
@@ -232,7 +278,39 @@ class RealVoice(private val ctx: Context) {
     }
 
     /** Gemini se awaaz lo aur WAV file me save karo */
+    /** Cartesia (Sonic) se awaaz — WAV file */
+    private fun fetchCartesia(text: String, voice: String, out: File): Boolean {
+        val k = cartesiaKey
+        if (k.isEmpty()) { lastError = "No Cartesia key"; return false }
+        val lang = if (text.any { it in '\u0900'..'\u097F' }) "hi" else "en"
+        for (model in listOf("sonic-3.6", "sonic-3")) {
+            val body = JSONObject()
+                .put("model_id", model)
+                .put("transcript", text)
+                .put("voice", JSONObject().put("mode", "id").put("id", voice))
+                .put("output_format", JSONObject().put("container", "wav").put("encoding", "pcm_s16le").put("sample_rate", 24000))
+                .put("language", lang)
+                .toString()
+            val (code, bytes, err) = cartesiaCall(k, "/tts/bytes", body)
+            if (code in 200..299 && bytes != null && bytes.size > 1000) {
+                out.writeBytes(bytes)
+                lastError = null
+                trimCache()
+                return true
+            }
+            lastError = "Cartesia → HTTP $code ${err}"
+            when (code) {
+                401, 403 -> { lastError = "Cartesia key is wrong or disabled ($code)"; pausedUntil = System.currentTimeMillis() + 30 * 60_000L; return false }
+                402, 429 -> { lastError = "Cartesia credits/limit used up ($code)"; pausedUntil = System.currentTimeMillis() + 15 * 60_000L; return false }
+                400, 404 -> continue // purana model try karo
+                else -> { pausedUntil = System.currentTimeMillis() + 60_000L; return false }
+            }
+        }
+        return false
+    }
+
     private fun fetch(text: String, voice: String, out: File): Boolean {
+        if (isCartesia(voice)) return fetchCartesia(text, voice, out)
         val key = this.key
         if (key.isEmpty()) return false
         val who = if (isMale(voice)) "a young Indian man" else "a young Indian woman"

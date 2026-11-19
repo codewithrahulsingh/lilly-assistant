@@ -461,6 +461,8 @@ class LillyService : Service() {
         val saved = prefs.getString("voice_source", null)
         return when {
             saved == "phone" -> "phone"
+            // Cartesia (Siya…) — RealVoice hi chalata hai; offline packs abhi band (sirf phone ki awaaz bachav)
+            saved == "cartesia" -> if (realVoice.enabled()) "gemini" else "phone"
             // Gemini awaaz chuni (pakki) — wahi; na bane toh neeche offline awaaz bachav ke liye
             saved == "gemini" && realVoice.enabled() -> "gemini"
             OfflineVoice.installed(this) -> "offline"
@@ -625,7 +627,10 @@ class LillyService : Service() {
                 onFallback = {
                     if (currentUtterance != id) return@speak
                     // Gemini na mile: same ladki/ladka wali offline awaaz, warna phone ki
-                    val backup = OfflineVoice.CHOICES.firstOrNull { it.male == realVoice.isMale() && OfflineVoice.packInstalled(this, it.pack) }
+                    val backup = if (prefs.getString("voice_source", null) == "cartesia") null
+                        else OfflineVoice.CHOICES.firstOrNull { it.male == realVoice.isMale() && OfflineVoice.packInstalled(this, it.pack) }
+                    if (prefs.getString("voice_source", null) == "cartesia")
+                        RealVoice.lastError?.let { LillyBus.status("Voice problem: $it") }
                     if (backup == null) speakDevice(spoken, id)
                     else OfflineVoice.speak(this, spoken, prefs.getFloat("voice_speed", 1.0f),
                         onDone = { finishSpeaking(id) },
