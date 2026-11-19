@@ -253,7 +253,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         val rv = prefs.getString("real_voice", RealVoice.DEFAULT) ?: RealVoice.DEFAULT
         val src = prefs.getString("voice_source", null)
         realValue.text = when {
-            src == "gemini" && !(key.isBlank() || key.startsWith("sk-ant-")) && rv != RealVoice.OFF -> "🔒 $rv — human voice (Gemini)"
+            src == "gemini" && !(key.isBlank() || key.startsWith("sk-ant-")) && rv != RealVoice.OFF -> {
+                val lines = CommonLines.ALL.map { if (RealVoice.isMale(rv)) Persona.masculine(it) else it }.distinct()
+                val n = RealVoice(this).keptCount(lines)
+                "🔒 $rv — ${n * 100 / lines.size.coerceAtLeast(1)}% of everyday lines saved on phone"
+            }
             OfflineVoice.installed(this) && src != "phone" && OfflineVoice.lastError != null -> "⚠️ Problem — tap to see"
             OfflineVoice.installed(this) && src != "phone" -> "🔒 ${OfflineVoice.chosen(this)?.name} — fixed, works offline"
             !OfflineVoice.installed(this) -> "Tap to download Lilly's human voice"

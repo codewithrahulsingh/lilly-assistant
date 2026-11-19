@@ -118,13 +118,20 @@ class RealVoice(private val ctx: Context) {
         }
         main.postDelayed(giveUp, waitMs)
         Thread {
-            val ok = try { fetch(text, v, file) } catch (e: Exception) {
+            fun once(): Boolean = try { fetch(text, v, file) } catch (e: Exception) {
                 lastError = when (e) {
                     is java.net.UnknownHostException -> "No internet connection"
                     is java.net.SocketTimeoutException -> "Google took too long to answer"
                     else -> "${e.javaClass.simpleName}: ${e.message ?: ""}"
                 }
                 false
+            }
+            var ok = once()
+            // Google ki chhoti-moti galti (server busy / der) — ek baar aur koshish, phir hi backup awaaz
+            if (!ok && !settled && my == token && lastError?.let { "HTTP 5" in it || "too long" in it || "no audio" in it } == true) {
+                pausedUntil = 0
+                Thread.sleep(1200)
+                if (!settled && my == token) ok = once()
             }
             main.post {
                 main.removeCallbacks(giveUp)
@@ -146,10 +153,15 @@ class RealVoice(private val ctx: Context) {
         val v = voice
         val todo = lines.filter { !keepFile(v, it).exists() }
         if (todo.isEmpty()) return
+        // Roz ki free limit ka zyada hissa asli jawabon ke liye bachao: din me max 40 lines save
+        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.ROOT).format(java.util.Date())
+        if (prefs.getString("pf_day", "") != today) prefs.edit().putString("pf_day", today).putInt("pf_count", 0).apply()
+        val left = 40 - prefs.getInt("pf_count", 0)
+        if (left <= 0) return
         prefetching = true
         Thread {
             try {
-                for (l in todo.take(25)) { // ek baar me thodi hi (free limit bachi rahe)
+                for (l in todo.take(minOf(25, left))) { // ek baar me thodi hi (free limit bachi rahe)
                     if (System.currentTimeMillis() < pausedUntil || voice != v) break
                     val f = keepFile(v, l)
                     if (f.exists()) continue
@@ -158,6 +170,7 @@ class RealVoice(private val ctx: Context) {
                     if (c.exists() && c.length() > 100 && c.renameTo(f)) continue
                     val ok = try { fetch(l, v, f) } catch (e: Exception) { false }
                     if (!ok) break
+                    prefs.edit().putInt("pf_count", prefs.getInt("pf_count", 0) + 1).apply()
                     Thread.sleep(20_000) // free limit: minute me kuch hi
                 }
             } finally { prefetching = false }
