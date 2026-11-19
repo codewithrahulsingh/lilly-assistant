@@ -30,7 +30,9 @@ object AiChat {
             "\n\nThings you remember about Rahul (use them naturally when relevant; " +
                 "don't list them unless asked):\n$facts"
         val base = if (male) SYSTEM.replace(FEMALE_LINE, MALE_LINE).replace("with a warm, friendly female voice", "with a warm, friendly male voice") else SYSTEM
-        return base + MEMORY_RULE + known
+        val rough = if (Abuse.roughAnswer) "\n\nRahul has turned on roast mode and is talking rough: answer the question correctly, " +
+            "but in a cheeky, rough Mumbai-tapori Hinglish style, playfully roasting him (slang like abe, saale, bhai is fine). Keep it short." else ""
+        return base + MEMORY_RULE + known + rough
     }
 
     /** Rahul ne ladke ki awaaz chuni ho toh AI bhi ladke ki tarah bole */

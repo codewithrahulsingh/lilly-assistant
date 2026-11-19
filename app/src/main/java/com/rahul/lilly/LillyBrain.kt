@@ -171,6 +171,11 @@ class LillyBrain(private val ctx: Context) {
                 return r.copy(display = d + "\n" + r.display, spoken = sp + " " + r.spoken, spokenEn = null)
             }
         }
+        // Gaali ke saath koi sawaal ("bc ye bata cricket score kya hai") — AI se jawab, tapori andaaz me
+        if (on && rest.split(" ").count { it.length > 1 } >= 3 && hasAiKey()) {
+            Abuse.roughAnswer = true
+            return Reply("Thinking…", "", askAi = rest)
+        }
         val (d, sp) = Abuse.reply(on, en, t)
         return Reply(d, sp, endChat = false)
     }

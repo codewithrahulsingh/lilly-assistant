@@ -1168,6 +1168,7 @@ class LillyService : Service() {
                 val act: () -> Unit = act@{
                     if (mode == Mode.STOPPED || my != aiToken) return@act
                     if (result == null) {
+                        Abuse.roughAnswer = false
                         // Asli wajah batao (limit, galat key, internet…), taaki pata chale kya theek karna hai
                         val why = AiChat.explain(failure)
                         if (Smart.looksLikeAction(question)) {
@@ -1193,6 +1194,15 @@ class LillyService : Service() {
                         LillyBus.heard("“${brain.roman(question)}” → $cmd")
                         deliver(brain.handleFromAi(question, cmd))
                         return@act
+                    }
+                    // Gaali + sawaal: jawab se pehle ek gaali wala taana
+                    if (Abuse.roughAnswer) {
+                        Abuse.roughAnswer = false
+                        if (!Abuse.isLecture(result.display + " " + result.spoken)) {
+                            val (jd, js) = Abuse.jab()
+                            say(jd + "\n" + result.display, (if (english) jd else js) + " " + result.spoken) { continueChat() }
+                            return@act
+                        }
                     }
                     // Gaali mode ON aur AI "aise shabd mat bolo" wala lecture de rahi — uski jagah gaali wala jawab
                     if (prefs.getBoolean("abuse_mode", false) && Abuse.isLecture(result.display + " " + result.spoken)) {

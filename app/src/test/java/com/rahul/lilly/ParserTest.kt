@@ -836,3 +836,13 @@ class AbuseDevanagariTest {
         org.junit.Assert.assertFalse(Abuse.isLecture("Delhi ka mausam aaj saaf rahega"))
     }
 }
+
+class AbuseMoreTest {
+    @org.junit.Test fun moreWords() {
+        for (t in listOf("bakchod", "bhadwe", "haramzade", "abe kutte", "suar", "nalayak", "dhakkan", "jhaatu", "teri maa ka", "piss off", "wtf"))
+            org.junit.Assert.assertTrue(t, Abuse.has(t))
+        for (t in listOf("mera kutta kaha hai", "jhatpat batao", "taste kaisa hai", "tatkal ticket book karo"))
+            org.junit.Assert.assertFalse(t, Abuse.has(t))
+        repeat(20) { org.junit.Assert.assertTrue(Abuse.reply(true, false, "bakchod").first.isNotBlank()) }
+    }
+}
