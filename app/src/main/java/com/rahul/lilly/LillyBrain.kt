@@ -1333,6 +1333,25 @@ class LillyBrain(private val ctx: Context) {
      * isliye khulne ke baad dekhte hain gaana baja ya nahi — nahi baja toh wahi dobara bhejte hain.
      */
     private fun spotifyReply(query: String, shown: String, remember: () -> Unit): Reply {
+        val old = spotifyOldWay(query, shown, remember)
+        // Spotify ka official App Remote (ek baar "Connect Spotify" kiya ho): seedha gaana, bina helper
+        if (SpotifyRemote.authorized(ctx)) {
+            return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
+                remember()
+                val main = Handler(Looper.getMainLooper())
+                Thread {
+                    val uri = SpotifyRemote.findUri(query)
+                    main.post {
+                        if (uri == null) { old.action?.invoke(); return@post }
+                        SpotifyRemote.play(ctx, uri) { ok -> if (!ok) old.action?.invoke() }
+                    }
+                }.start()
+            }, endChat = true)
+        }
+        return old
+    }
+
+    private fun spotifyOldWay(query: String, shown: String, remember: () -> Unit): Reply {
         if (LillyAccess.usable(ctx)) {
             // Accessibility ON: Spotify search kholo, results aate hi pehle gaane par tap
             return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {

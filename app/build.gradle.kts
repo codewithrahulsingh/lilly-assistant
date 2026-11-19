@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 42
-        versionName = "6.5"
+        versionCode = 43
+        versionName = "6.6"
         // Sirf phone wale processor: APK chhoti aur install tez
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -40,6 +40,9 @@ dependencies {
     implementation("com.alphacephei:vosk-android:0.3.47@aar")
     // Offline insaani awaaz (Piper voice) — build ke waqt GitHub se aata hai
     implementation(files("libs/sherpa-onnx.aar"))
+    // Spotify ka official App Remote (gaana seedha chalane ke liye)
+    implementation(files("libs/spotify-app-remote.aar"))
+    implementation("com.google.code.gson:gson:2.10.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

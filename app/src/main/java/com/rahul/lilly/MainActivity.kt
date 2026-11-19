@@ -50,6 +50,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var matchValue: TextView
     private lateinit var abuseValue: TextView
     private lateinit var musicValue: TextView
+    private lateinit var spotifyConnValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -239,6 +240,10 @@ class MainActivity : Activity(), LillyBus.Ui {
         musicValue = card(r14, "🎵", "Music app") { chooseMusicApp() }
         card(r14, "▶️", "Which apps play by voice") { musicHelp() }.text = "No helper needed"
 
+        val r15 = row(col)
+        spotifyConnValue = card(r15, "🟢", "Connect Spotify") { connectSpotify() }
+        card(r15, "🎧", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -280,6 +285,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        spotifyConnValue.text = if (SpotifyRemote.authorized(this)) "Connected ✓ plays songs directly" else "Tap once — then songs play directly"
         musicValue.text = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.second?.let { "$it" } ?: "Auto (last one you used)"
         abuseValue.text = if (prefs.getBoolean("abuse_mode", false)) "ON 😈 swears back at you" else "OFF — polite replies"
         matchValue.text = when {
@@ -1427,6 +1433,51 @@ class MainActivity : Activity(), LillyBus.Ui {
                 prefs.edit().putString("music_app", list[w].first).apply()
                 refreshCards(); d.dismiss()
             }.show()
+    }
+
+    /** Spotify ka official connection — ek baar "Allow" */
+    private fun connectSpotify() {
+        if (!SpotifyRemote.installed(this)) {
+            android.widget.Toast.makeText(this, "Install Spotify and log in first", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        android.widget.Toast.makeText(this, "Opening Spotify… tap Agree / Allow", android.widget.Toast.LENGTH_LONG).show()
+        SpotifyRemote.connect(this, true) { r ->
+            refreshCards()
+            if (isFinishing) return@connect
+            if (r != null) AlertDialog.Builder(this).setTitle("Spotify connected ✓")
+                .setMessage("Now say \"Lilly, Spotify par Kesariya chalao\" — the song starts by itself, no helper needed.")
+                .setPositiveButton("Test now") { _, _ -> testSpotifyPlay() }
+                .setNegativeButton("OK", null).show()
+            else AlertDialog.Builder(this).setTitle("Spotify didn't connect ✗")
+                .setMessage("Reason:\n${SpotifyRemote.lastError ?: "unknown"}\n\n" +
+                    "Check: Spotify is installed and logged in, your email is added in the Spotify developer dashboard (User Management), " +
+                    "and the Android package + SHA1 are saved there.\n\nPlease send a screenshot of this.")
+                .setPositiveButton("Try again") { _, _ -> connectSpotify() }
+                .setNegativeButton("Close", null).show()
+        }
+    }
+
+    private fun testSpotifyPlay() {
+        android.widget.Toast.makeText(this, "Finding Kesariya…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            val uri = SpotifyRemote.findUri("Kesariya Arijit Singh")
+            runOnUiThread {
+                if (uri == null) {
+                    AlertDialog.Builder(this).setTitle("Couldn't find the song").setMessage("Check the internet and try again.")
+                        .setPositiveButton("OK", null).show()
+                    return@runOnUiThread
+                }
+                SpotifyRemote.play(this, uri) { ok ->
+                    if (isFinishing) return@play
+                    if (ok) android.widget.Toast.makeText(this, "Playing on Spotify ✓", android.widget.Toast.LENGTH_SHORT).show()
+                    else AlertDialog.Builder(this).setTitle("Spotify didn't play ✗")
+                        .setMessage("Reason:\n${SpotifyRemote.lastError ?: "unknown"}\n\nTap \"Connect Spotify\" first if you haven't.")
+                        .setPositiveButton("Connect Spotify") { _, _ -> connectSpotify() }
+                        .setNegativeButton("Close", null).show()
+                }
+            }
+        }.start()
     }
 
     private fun musicHelp() {
