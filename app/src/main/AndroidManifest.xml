@@ -109,5 +109,15 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- Sirf chalte gaane ka control (naam, aage/peeche, shuffle…) — notifications padhta/save nahi karta -->
+        <service
+            android:name=".MediaListener"
+            android:label="Lilly music control"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

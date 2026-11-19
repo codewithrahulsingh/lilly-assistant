@@ -1279,10 +1279,30 @@ class LillyBrain(private val ctx: Context) {
             "liked" -> "Playing your Liked Songs" to "आपके लाइक किए गाने चला रही हूँ"
             else -> "" to ""
         }
-        if (SpotifyRemote.authorized(ctx) && installed(spotify)) {
-            return Reply("One second…", "एक सेकंड", later = { spotifyMusicWork(c, en, hi) })
+        // Koi doosra app baj raha hai (YouTube Music, JioSaavn…) — Android ke music control se
+        val other = MediaCtl.allowed(ctx) && MediaCtl.current(ctx)?.packageName.let { it != null && it != spotify }
+        if (SpotifyRemote.authorized(ctx) && installed(spotify) && !other) {
+            return Reply("One second…", "एक सेकंड", later = { spotifyMusicWork(c, en, hi).let { r -> if (r.failed && MediaCtl.allowed(ctx)) mediaWork(c, en, hi) else r } })
         }
+        if (MediaCtl.allowed(ctx)) return Reply("One second…", "एक सेकंड", later = { mediaWork(c, en, hi) })
         return musicFallback(c, en, hi)
+    }
+
+    /** Android music control (har music app ke liye, bina helper) */
+    private fun mediaWork(c: MusicCmd, en: String, hi: String): Reply {
+        if (c.action == "nowplaying") {
+            val n = MediaCtl.nowPlaying(ctx)
+            return if (n != null) Reply("This is $n", "ये है $n", endChat = true)
+            else Reply("Nothing is playing right now", "अभी कोई गाना नहीं चल रहा", endChat = true)
+        }
+        if (c.action == "liked") return playMusic("liked songs", "")
+        if (c.action == "queue") return Reply("Adding to the queue works with Spotify — tap Connect Spotify in the Lilly app",
+            "क्यू में डालना स्पॉटिफाई कनेक्ट करने पर होगा", endChat = true, failed = true)
+        return when (MediaCtl.run(ctx, c.action, c.arg)) {
+            true -> Reply(en, hi, endChat = true)
+            false -> Reply("This music app doesn't let me do that", "ये म्यूज़िक ऐप ये करने नहीं देता", endChat = true, failed = true)
+            null -> Reply("Nothing is playing right now", "अभी कोई गाना नहीं चल रहा", endChat = true, failed = true)
+        }
     }
 
     private fun spotifyMusicWork(c: MusicCmd, en: String, hi: String): Reply {
@@ -1436,6 +1456,17 @@ class LillyBrain(private val ctx: Context) {
     }
 
     private fun spotifyOldWay(query: String, shown: String, remember: () -> Unit): Reply {
+        val old = spotifyOldWay2(query, shown, remember)
+        // Spotify ka "session" zinda ho toh Android ke music control se seedha "dhoondh ke chalao"
+        if (MediaCtl.allowed(ctx)) return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
+            remember()
+            if (!MediaCtl.playFromSearch(ctx, spotify, query)) old.action?.invoke()
+            else Handler(Looper.getMainLooper()).postDelayed({ if (!audio.isMusicActive) old.action?.invoke() }, 4000)
+        }, endChat = true)
+        return old
+    }
+
+    private fun spotifyOldWay2(query: String, shown: String, remember: () -> Unit): Reply {
         if (LillyAccess.usable(ctx)) {
             // Accessibility ON: Spotify search kholo, results aate hi pehle gaane par tap
             return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {

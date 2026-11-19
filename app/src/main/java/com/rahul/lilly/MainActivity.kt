@@ -51,6 +51,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var abuseValue: TextView
     private lateinit var musicValue: TextView
     private lateinit var spotifyConnValue: TextView
+    private lateinit var mediaCtlValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -244,6 +245,13 @@ class MainActivity : Activity(), LillyBus.Ui {
         spotifyConnValue = card(r15, "🟢", "Connect Spotify") { connectSpotify() }
         card(r15, "🎧", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
 
+        val r16 = row(col)
+        mediaCtlValue = card(r16, "🎛", "Music control") { mediaCtlSetup() }
+        card(r16, "🎶", "Song name now") {
+            val n = if (MediaCtl.allowed(this)) MediaCtl.nowPlaying(this) else null
+            android.widget.Toast.makeText(this, n ?: "Nothing playing (or Music control is off)", android.widget.Toast.LENGTH_LONG).show()
+        }.text = "Shows what's playing"
+
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -285,6 +293,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        mediaCtlValue.text = if (MediaCtl.allowed(this)) "ON ✓ all music apps" else "Tap to allow (no helper needed)"
         spotifyConnValue.text = if (SpotifyRemote.authorized(this)) "Connected ✓ plays songs directly" else "Tap once — then songs play directly"
         musicValue.text = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.second?.let { "$it" } ?: "Auto (last one you used)"
         abuseValue.text = if (prefs.getBoolean("abuse_mode", false)) "ON 😈 swears back at you" else "OFF — polite replies"
@@ -1513,6 +1522,21 @@ class MainActivity : Activity(), LillyBus.Ui {
                 }
             }
         }.start()
+    }
+
+    private fun mediaCtlSetup() {
+        AlertDialog.Builder(this).setTitle("🎛 Music control")
+            .setMessage(
+                (if (MediaCtl.allowed(this)) "ON ✓\n\n" else "") +
+                    "Lets Lilly control whatever song is playing — in Spotify, YouTube Music, JioSaavn, Wynk and others — without the Lilly helper:\n\n" +
+                    "• \"Ye kaunsa gaana hai?\"\n• \"Gaana shuru se chalao\" / \"30 second aage karo\"\n" +
+                    "• \"Shuffle on karo\" / \"Repeat karo\" / \"Ye gaana like karo\" (if the app has those buttons)\n" +
+                    "• Spotify songs start more reliably\n\n" +
+                    "Android calls this \"Notification access\". Lilly uses it only for the music player — she doesn't read or save your notifications.\n\n" +
+                    "Steps: tap Open → find \"Lilly music control\" → turn ON → Allow."
+            )
+            .setPositiveButton("Open") { _, _ -> tryStart(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun musicHelp() {
