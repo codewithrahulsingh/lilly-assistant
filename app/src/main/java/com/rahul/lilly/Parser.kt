@@ -716,6 +716,11 @@ object Parser {
         if (Regex("""\b(joke|jokes|chutkula|chutkule|make me laugh|hasao|hansao)\b""").containsMatchIn(t)) return Cmd.Chat("joke")
 
         // Gaane ka control
+        // Aur tareeke: "gaana band karo", "music roko", "aage wala gaana", "gaana wapas chalao"
+        if (Regex("""^(?:$SONG|spotify)\s+(?:band|bandh|off|rok|roko|rok do)\s*(?:karo|kar do|kardo|do)?$|^(?:stop|pause)\s+(?:the\s+)?(?:music|song|songs|$SONG)$|^(?:chup|chup karo|bas karo|bas)$""", RegexOption.IGNORE_CASE).matches(t)) return Cmd.Media("pause")
+        if (Regex("""^(?:aage|agle|next)\s+(?:wala|vala)\s+(?:$SONG)(?:\s+(?:chalao|lagao|bajao|karo))?$|^skip(?:\s+(?:this|it|karo|kar do))*$|^(?:ye|yeh|is)\s+(?:$SONG)\s+(?:skip|badlo|badal do|change)\s*(?:karo|kar do)?$""", RegexOption.IGNORE_CASE).matches(t)) return Cmd.Media("next")
+        if (Regex("""^(?:peeche|pichhe|piche)\s+(?:wala|vala)\s+(?:$SONG)(?:\s+(?:chalao|lagao|bajao|karo))?$""", RegexOption.IGNORE_CASE).matches(t)) return Cmd.Media("previous")
+        if (Regex("""^(?:$SONG|spotify)\s+(?:wapas|vapas|phir|fir)\s+(?:chalao|chalu karo|lagao|bajao|start karo)$|^(?:unpause|resume (?:the )?(?:music|song))$""", RegexOption.IGNORE_CASE).matches(t)) return Cmd.Media("resume")
         if (nextRe.matches(t)) return Cmd.Media("next")
         if (prevRe.matches(t)) return Cmd.Media("previous")
         if (pauseRe.matches(t)) return Cmd.Media("pause")

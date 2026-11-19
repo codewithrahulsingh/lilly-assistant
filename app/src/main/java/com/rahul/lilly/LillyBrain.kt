@@ -235,6 +235,7 @@ class LillyBrain(private val ctx: Context) {
             Cmd.Recall -> recallReply()
             is Cmd.RecallAbout -> recallAbout(main)
             is CallLogCmd -> callLogReply(main.kind)
+            is MusicCmd -> musicCmdReply(main)
             is ListCmd -> listReply(main)
             is CalendarCmd -> calendarReply(main)
             is NavigateCmd -> navigateReply(main)
@@ -1260,7 +1261,87 @@ class LillyBrain(private val ctx: Context) {
         } catch (e: Exception) { }
     }
 
-    private fun mediaReply(action: String): Reply = when (action) {
+    /** Spotify connect hai aur abhi Spotify hi baj raha/chuna hai — tab App Remote se pakka control */
+    private fun spotifyInControl(): Boolean = SpotifyRemote.authorized(ctx) && installed(spotify) &&
+        ((prefs.getString("music_app", "") ?: "").let { it == "spotify" || it.isBlank() } || learner.musicApp == "spotify")
+
+    private fun musicCmdReply(c: MusicCmd): Reply {
+        val (en, hi) = when (c.action) {
+            "shuffle_on" -> "Shuffle on" to "शफ़ल ऑन कर दिया"
+            "shuffle_off" -> "Shuffle off" to "शफ़ल बंद कर दिया"
+            "repeat_on" -> "Repeating this song" to "ये गाना बार-बार चलेगा"
+            "repeat_off" -> "Repeat off" to "रिपीट बंद कर दिया"
+            "restart" -> "Playing from the start" to "गाना शुरू से चला दिया"
+            "forward" -> "Skipped ahead ${c.arg} seconds" to "${c.arg} सेकंड आगे कर दिया"
+            "rewind" -> "Went back ${c.arg} seconds" to "${c.arg} सेकंड पीछे कर दिया"
+            "like" -> "Saved to your Liked Songs" to "गाना लाइक कर दिया"
+            "queue" -> "Added ${c.arg} to the queue" to "${c.arg} अगला चलेगा"
+            "liked" -> "Playing your Liked Songs" to "आपके लाइक किए गाने चला रही हूँ"
+            else -> "" to ""
+        }
+        if (SpotifyRemote.authorized(ctx) && installed(spotify)) {
+            return Reply("One second…", "एक सेकंड", later = { spotifyMusicWork(c, en, hi) })
+        }
+        return musicFallback(c, en, hi)
+    }
+
+    private fun spotifyMusicWork(c: MusicCmd, en: String, hi: String): Reply {
+                if (c.action == "nowplaying") {
+                    val (conn, name) = SpotifyRemote.nowPlaying(ctx)
+                    return if (conn && name != null) Reply("This is $name", "ये है $name", endChat = true)
+                    else Reply("Nothing is playing on Spotify", "स्पॉटिफाई पर अभी कुछ नहीं चल रहा", endChat = true)
+                }
+                val arg = when (c.action) {
+                    "queue" -> SpotifyRemote.findUri(c.arg, prefer = "track") ?: ""
+                    else -> c.arg
+                }
+                val (conn, ok) = when (c.action) {
+                    "liked" -> SpotifyRemote.run(ctx, "playuri", "spotify:collection:tracks").let { r ->
+                        if (r.second == true) r else SpotifyRemote.run(ctx, "playuri", "spotify:collection")
+                    }
+                    else -> SpotifyRemote.run(ctx, c.action, arg)
+                }
+                return if (conn && ok == true) Reply(en, hi, endChat = true)
+                else if (!conn) Reply("I couldn't reach Spotify. Open the Lilly app and tap Connect Spotify", "स्पॉटिफाई से नहीं जुड़ पाई, लिली ऐप में कनेक्ट स्पॉटिफाई दबाइए", endChat = true, failed = true)
+                else Reply("Spotify didn't do that${SpotifyRemote.lastError?.let { " ($it)" } ?: ""}", "स्पॉटिफाई ने ये नहीं किया", endChat = true, failed = true)
+    }
+
+    /** Spotify connect nahi: jo media buttons se ho sakta hai wo karo */
+    private fun musicFallback(c: MusicCmd, en: String, hi: String): Reply {
+        return when (c.action) {
+            "restart" -> Reply(en, hi, { mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }, endChat = true)
+            "forward" -> Reply(en, hi, { mediaKey(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) }, endChat = true)
+            "rewind" -> Reply(en, hi, { mediaKey(KeyEvent.KEYCODE_MEDIA_REWIND) }, endChat = true)
+            "liked" -> playMusic("liked songs", "")
+            "queue" -> playMusic(c.arg, "")
+            else -> Reply(
+                "I can do that on Spotify once you tap \"Connect Spotify\" in the Lilly app",
+                "ये स्पॉटिफाई कनेक्ट करने के बाद होगा, लिली ऐप में कनेक्ट स्पॉटिफाई दबाइए", endChat = true, failed = true
+            )
+        }
+    }
+
+    private fun mediaReply(action: String): Reply = if (spotifyInControl()) {
+        // Spotify ko seedha bolo (media button kabhi-kabhi doosre app ko chala deta hai); na chale toh button
+        val (en, hi) = when (action) {
+            "pause" -> "Paused" to "गाना रोक दिया"
+            "next" -> "Next song" to "अगला गाना"
+            "previous" -> "Previous song" to "पिछला गाना"
+            else -> "Playing music" to "गाना चला रही हूँ"
+        }
+        Reply(en, hi, {
+            val code = when (action) {
+                "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE; "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+                "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS; else -> KeyEvent.KEYCODE_MEDIA_PLAY
+            }
+            Thread {
+                val (conn, ok) = SpotifyRemote.run(ctx, action)
+                if (!conn || ok != true) Handler(Looper.getMainLooper()).post { mediaKey(code) }
+            }.start()
+        }, endChat = true)
+    } else mediaReplyKeys(action)
+
+    private fun mediaReplyKeys(action: String): Reply = when (action) {
         "pause" -> Reply("Paused", "गाना रोक दिया", { mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE) }, endChat = true)
         "next" -> Reply("Next song", "अगला गाना", { mediaKey(KeyEvent.KEYCODE_MEDIA_NEXT) }, endChat = true)
         "previous" -> Reply("Previous song", "पिछला गाना", {
@@ -1339,8 +1420,11 @@ class LillyBrain(private val ctx: Context) {
             return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
                 remember()
                 val main = Handler(Looper.getMainLooper())
+                val said = lastOriginal.lowercase()
+                val artist = Regex("""\bke (?:gaane|gane|songs|gaano)\b|\bsongs? (?:of|by)\b|\bsongs\b""").containsMatchIn(said)
+                val playlist = Regex("""\bplaylist\b""").containsMatchIn(said)
                 Thread {
-                    val uri = SpotifyRemote.findUri(query)
+                    val uri = SpotifyRemote.findUri(query + if (playlist) " playlist" else "", artistFirst = artist, prefer = if (playlist) "playlist" else null)
                     main.post {
                         if (uri == null) { old.action?.invoke(); return@post }
                         SpotifyRemote.play(ctx, uri) { ok -> if (!ok) old.action?.invoke() }

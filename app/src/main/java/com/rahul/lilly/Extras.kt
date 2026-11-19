@@ -9,10 +9,59 @@ data class ListCmd(val list: String, val op: String, val item: String = "") : Cm
 /** Calendar: op = read / add; day = today / tomorrow; at = samay (add ke liye) */
 data class CalendarCmd(val op: String, val day: String, val title: String = "", val at: TimeParse.When? = null) : Cmd()
 
+/**
+ * Gaane ka control: action = restart / forward / rewind / shuffle_on / shuffle_off / repeat_on / repeat_off /
+ * nowplaying / like / queue (arg = gaana) / liked (apne liked songs chalao)
+ */
+data class MusicCmd(val action: String, val arg: String = "") : Cmd()
+
 /** Ek saath do kaam: "torch jalao aur volume badhao" */
 object Extras {
 
-    fun parse(t: String): Cmd? = sms(t) ?: callLog(t) ?: list(t) ?: calendar(t)
+    fun parse(t: String): Cmd? = music(t) ?: sms(t) ?: callLog(t) ?: list(t) ?: calendar(t)
+
+    // ---------------- Gaane ka control ----------------
+
+    private const val SNG = """(?:gaana|gana|gaane|gane|song|music|track|isko|ise|ye|yeh|is)"""
+
+    private fun music(t: String): Cmd? {
+        // "ye kaunsa gaana hai" / "what song is this"
+        if (Regex("""\b(?:kaun ?sa|konsa|kaunsa|kya naam|naam kya)\b.*\b(?:gaana|gana|song|track)\b|\b(?:gaana|gana|song)\b.*\b(?:kaun ?sa|konsa|kaunsa|ka naam)\b|\bwhat(?:'s| is)? (?:this )?(?:song|track)\b|\bwhat song is (?:this|playing)\b|\bwhich song\b|\bsong ka naam\b|\bnow playing\b""").containsMatchIn(t))
+            return MusicCmd("nowplaying")
+        // "iske baad Kesariya lagao" / "add Kesariya to queue" / "queue me Kesariya daalo"
+        Regex("""^(?:iske baad|is ke baad|uske baad|next me)\s+(.+?)\s+(?:lagao|laga do|chalao|bajao|daalo|daal do|play karo)$""").find(t)?.let { return MusicCmd("queue", it.groupValues[1]) }
+        Regex("""^(?:add|put)\s+(.+?)\s+(?:to|in)\s+(?:the\s+)?queue$""").find(t)?.let { return MusicCmd("queue", it.groupValues[1]) }
+        Regex("""^queue\s+(?:me|mein|main)\s+(.+?)\s+(?:daalo|daal do|dalo|lagao|add karo)$|^queue\s+(.+)$""").find(t)?.let { m ->
+            return MusicCmd("queue", m.groupValues[1].ifBlank { m.groupValues[2] })
+        }
+        // Like / save
+        if (Regex("""\b(?:like|save|pasand)\b.*\b(?:song|gaana|gana|track|this|ise|isko|ye)\b|\b(?:ye|is|this)\s+(?:gaana|gana|song)\s+(?:ko\s+)?(?:like|save)\b|\bliked (?:songs )?(?:me|mein) (?:daalo|daal do|add karo)\b""").containsMatchIn(t) &&
+            !Regex("""\b(?:chalao|play|bajao|sunao)\b""").containsMatchIn(t)) return MusicCmd("like")
+        // Liked songs chalao
+        if (Regex("""\b(?:liked songs|liked gaane|meri? pasand ke gaane|my likes|favourite songs|favorite songs|my music)\b""").containsMatchIn(t) &&
+            Regex("""\b(?:chalao|play|bajao|sunao|lagao|start)\b""").containsMatchIn(t)) return MusicCmd("liked")
+        // Shuffle / repeat
+        if (Regex("""\bshuffle\b""").containsMatchIn(t)) return MusicCmd(if (Regex("""\b(off|band|bandh|hatao|stop|disable)\b""").containsMatchIn(t)) "shuffle_off" else "shuffle_on")
+        if (Regex("""\b(?:repeat|loop|baar baar)\b""").containsMatchIn(t) && !Regex("""\balarm\b""").containsMatchIn(t))
+            return MusicCmd(if (Regex("""\b(off|band|bandh|hatao|stop|disable)\b""").containsMatchIn(t)) "repeat_off" else "repeat_on")
+        // Shuru se
+        if (Regex("""^(?:$SNG\s+)*(?:shuru se|starting se|start se|phir se|fir se|dobara|restart)\s*(?:$SNG\s+)*(?:chalao|bajao|lagao|karo|play karo)?$|^restart(?: the)? (?:song|track|music)$|^play (?:it|this|the song) again$|^(?:$SNG\s+)?replay$""").containsMatchIn(t))
+            return MusicCmd("restart")
+        // Aage / peeche
+        Regex("""^(?:$SNG\s+)*(?:(\d+)\s*(?:second|seconds|sec|minute|minutes|min)\s+)?(aage|age|forward|peeche|piche|pichhe|back|rewind)\s*(?:(\d+)\s*(?:second|seconds|sec|minute|minutes|min))?\s*(?:karo|kar do|kardo|le jao|jao|please)?$""").find(t)?.let { m ->
+            val n = (m.groupValues[1].ifBlank { m.groupValues[3] }).toIntOrNull() ?: 10
+            val mins = Regex("""\bmin""").containsMatchIn(t)
+            val secs = if (mins) n * 60 else n
+            val fwd = m.groupValues[2] in setOf("aage", "age", "forward")
+            if (m.groupValues[2] == "back" && !Regex("""\d|second|sec""").containsMatchIn(t)) return null
+            return MusicCmd(if (fwd) "forward" else "rewind", secs.toString())
+        }
+        Regex("""^(?:skip|fast forward|go)\s+(?:ahead\s+|forward\s+)?(\d+)\s*(second|seconds|sec|minute|minutes|min)s?$""").find(t)?.let { m ->
+            val n = m.groupValues[1].toInt() * (if (m.groupValues[2].startsWith("min")) 60 else 1)
+            return MusicCmd("forward", n.toString())
+        }
+        return null
+    }
 
     /** "note karo ki…" — notes me (yaaddasht se pehle) */
     fun note(t: String): Cmd? =
@@ -28,7 +77,7 @@ object Extras {
     private fun callLog(t: String): Cmd? {
         if (Regex("""\b(call ?back|wapas call|vapas call|wapis call|jisne (?:abhi )?call kiya (?:tha )?(?:use|usko|unko|use hi)|return (?:the |that )?call|call (?:them|him|her) back)\b""").containsMatchIn(t))
             return CallLogCmd("back")
-        if (Regex("""\b(redial|last number|aakhri number|akhri number|pichla number|last dialed|last dialled|dobara (?:wahi )?(?:number )?(?:call|lagao|milao))\b""").containsMatchIn(t))
+        if (Regex("""\b(redial|last number|aakhri number|akhri number|pichla number|last dialed|last dialled|dobara (?:wahi )?(?:number )?(?:call|lagao|milao))\b""").containsMatchIn(t) && !Regex("""\bko\b""").containsMatchIn(t))
             return CallLogCmd("redial")
         if (Regex("""\b(missed calls?|miss calls?|missed call|chhute? (?:hue )?calls?|kisne (?:mujhe )?call kiya|kiska call aaya|kis ka call aaya|kiske call aaye|who called|any (?:missed )?calls|koi call aaya|kitne call aaye)\b""").containsMatchIn(t))
             return CallLogCmd("missed")

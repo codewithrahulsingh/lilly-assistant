@@ -67,6 +67,62 @@ object SpotifyRemote {
         }
     }
 
+    // ---------------- Control (background thread se bulao: jawab aane tak rukta hai, max 5 sec) ----------------
+
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Spotify se jud ke kaam karo. op me result do: done(text/null). Returns null = Spotify se nahi juda */
+    private fun <T> blocking(ctx: Context, op: (SpotifyAppRemote, (T?) -> Unit) -> Unit): Pair<Boolean, T?> {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var connected = false
+        var out: T? = null
+        ui.post {
+            connect(ctx.applicationContext, false) { r ->
+                if (r == null) { latch.countDown(); return@connect }
+                connected = true
+                try { op(r) { v -> out = v; latch.countDown() } } catch (e: Throwable) { lastError = e.message; latch.countDown() }
+            }
+        }
+        latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+        return connected to out
+    }
+
+    /** Abhi kaunsa gaana: "Kesariya — Arijit Singh" */
+    fun nowPlaying(ctx: Context): Pair<Boolean, String?> = blocking<String>(ctx) { r, done ->
+        r.playerApi.playerState.setResultCallback { st ->
+            val t = st.track
+            done(t?.let { it.name + (it.artist?.name?.let { a -> " — $a" } ?: "") })
+        }.setErrorCallback { done(null) }
+    }
+
+    /** Ek simple kaam (shuffle, repeat, seek, like, queue…). true = ho gaya */
+    fun run(ctx: Context, action: String, arg: String = ""): Pair<Boolean, Boolean?> = blocking<Boolean>(ctx) { r, done ->
+        val p = r.playerApi
+        val ok: (Any?) -> Unit = { done(true) }
+        val bad = com.spotify.protocol.client.ErrorCallback { t -> lastError = t.message; done(false) }
+        when (action) {
+            "shuffle_on" -> p.setShuffle(true).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "shuffle_off" -> p.setShuffle(false).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "repeat_on" -> p.setRepeat(1).setResultCallback { ok(it) }.setErrorCallback(bad)   // 1 = yahi gaana baar-baar
+            "repeat_off" -> p.setRepeat(0).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "restart" -> p.seekTo(0).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "forward" -> p.seekToRelativePosition((arg.toLongOrNull() ?: 10) * 1000).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "rewind" -> p.seekToRelativePosition(-(arg.toLongOrNull() ?: 10) * 1000).setResultCallback { ok(it) }.setErrorCallback(bad)
+            "pause" -> p.pause().setResultCallback { ok(it) }.setErrorCallback(bad)
+            "resume" -> p.resume().setResultCallback { ok(it) }.setErrorCallback(bad)
+            "next" -> p.skipNext().setResultCallback { ok(it) }.setErrorCallback(bad)
+            "previous" -> p.skipPrevious().setResultCallback { ok(it) }.setErrorCallback(bad)
+            "queue", "playuri" -> if (arg.startsWith("spotify:")) {
+                (if (action == "queue") p.queue(arg) else p.play(arg)).setResultCallback { ok(it) }.setErrorCallback(bad)
+            } else done(false)
+            "like" -> p.playerState.setResultCallback { st ->
+                val u = st.track?.uri
+                if (u == null) done(false) else r.userApi.addToLibrary(u).setResultCallback { ok(it) }.setErrorCallback(bad)
+            }.setErrorCallback(bad)
+            else -> done(false)
+        }
+    }
+
     // ---------------- Gaane ka Spotify link dhoondhna (bina Spotify login ke) ----------------
 
     private val linkRe = Regex(
@@ -77,13 +133,14 @@ object SpotifyRemote {
      * "Kesariya" -> spotify:track:… ; "Arijit Singh" -> spotify:artist:…
      * Web search se pehla Spotify link (background thread par chalao). Na mile toh null.
      */
-    fun findUri(query: String, artistFirst: Boolean = false): String? {
+    fun findUri(query: String, artistFirst: Boolean = false, prefer: String? = null): String? {
         val q = URLEncoder.encode("site:open.spotify.com $query", "UTF-8")
         for (url in listOf("https://html.duckduckgo.com/html/?q=$q", "https://www.bing.com/search?q=$q")) {
             val html = get(url) ?: continue
             val all = linkRe.findAll(html).map { it.groupValues[1] to it.groupValues[2] }.distinct().toList()
             if (all.isEmpty()) continue
-            val pick = (if (artistFirst) all.firstOrNull { it.first == "artist" } else null)
+            val pick = (prefer?.let { p -> all.firstOrNull { it.first == p } })
+                ?: (if (artistFirst) all.firstOrNull { it.first == "artist" } else null)
                 ?: all.firstOrNull { it.first == "track" } ?: all.first()
             return "spotify:${pick.first}:${pick.second}"
         }

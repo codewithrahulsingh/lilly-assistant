@@ -863,3 +863,18 @@ class MusicAppsTest {
         org.junit.Assert.assertEquals(Cmd.OpenApp("spotify"), Parser.parse("spotify kholo"))
     }
 }
+
+class MusicControlTest {
+    @org.junit.Test fun controls() {
+        val eq = { a: Any, b: Any -> org.junit.Assert.assertEquals(a, b) }
+        eq(Cmd.Media("pause"), Parser.parse("gaana band karo"))
+        eq(Cmd.Media("next"), Parser.parse("aage wala gaana chalao"))
+        eq(Cmd.Media("resume"), Parser.parse("gaana wapas chalao"))
+        eq(MusicCmd("nowplaying"), Parser.parse("ye kaunsa gaana hai"))
+        eq(MusicCmd("queue", "kesariya"), Parser.parse("iske baad kesariya lagao"))
+        eq(MusicCmd("repeat_on"), Parser.parse("is gaane ko repeat karo"))
+        eq(MusicCmd("forward", "30"), Parser.parse("30 second aage karo"))
+        eq(MusicCmd("like"), Parser.parse("ye gaana like karo"))
+        org.junit.Assert.assertTrue(Parser.parse("dobara call karo rahul ko") !is CallLogCmd)
+    }
+}
