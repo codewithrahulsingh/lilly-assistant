@@ -245,7 +245,8 @@ class RealVoice(private val ctx: Context) {
             )
             p.setDataSource(file.absolutePath)
             p.setOnCompletionListener { finished(it, my, onDone) }
-            p.setOnErrorListener { mp, _, _ ->
+            p.setOnErrorListener { mp, what, extra ->
+                lastError = "The phone couldn't play the voice file (error $what/$extra)"
                 file.delete()
                 if (player === mp) player = null
                 try { mp.release() } catch (e: Exception) { }
@@ -256,6 +257,7 @@ class RealVoice(private val ctx: Context) {
             player = p
             p.start()
         } catch (e: Exception) {
+            lastError = "The phone couldn't play the voice file (${e.javaClass.simpleName} ${e.message ?: ""})"
             file.delete()
             if (my == token) onFallback()
         }
@@ -288,12 +290,13 @@ class RealVoice(private val ctx: Context) {
                 .put("model_id", model)
                 .put("transcript", text)
                 .put("voice", JSONObject().put("mode", "id").put("id", voice))
-                .put("output_format", JSONObject().put("container", "wav").put("encoding", "pcm_s16le").put("sample_rate", 24000))
+                // "raw" PCM leke khud WAV banao (Cartesia ka streaming WAV header kuch phones ka player nahi chala pata)
+                .put("output_format", JSONObject().put("container", "raw").put("encoding", "pcm_s16le").put("sample_rate", 24000))
                 .put("language", lang)
                 .toString()
             val (code, bytes, err) = cartesiaCall(k, "/tts/bytes", body)
             if (code in 200..299 && bytes != null && bytes.size > 1000) {
-                out.writeBytes(bytes)
+                writeWav(out, bytes, 24000)
                 lastError = null
                 trimCache()
                 return true
