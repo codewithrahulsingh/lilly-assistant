@@ -53,8 +53,8 @@ object SpotifyRemote {
     }
 
     /** spotify:track:… / spotify:artist:… chalao. done(true) = baj gaya */
-    fun play(ctx: Context, uri: String, done: (Boolean) -> Unit) {
-        connect(ctx.applicationContext, false) { r ->
+    fun play(ctx: Context, uri: String, showAuth: Boolean = false, done: (Boolean) -> Unit) {
+        connect(if (showAuth) ctx else ctx.applicationContext, showAuth) { r ->
             if (r == null) { done(false); return@connect }
             try {
                 r.playerApi.play(uri)

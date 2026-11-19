@@ -10,10 +10,14 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 43
-        versionName = "6.6"
+        versionCode = 44
+        versionName = "6.7"
         // Sirf phone wale processor: APK chhoti aur install tez
         ndk { abiFilters += listOf("arm64-v8a") }
+        // Spotify login ke baad wapas Lilly me aane ka raasta (lilly://spotify-callback)
+        manifestPlaceholders["redirectSchemeName"] = "lilly"
+        manifestPlaceholders["redirectHostName"] = "spotify-callback"
+        manifestPlaceholders["redirectPathPattern"] = ".*"
     }
     // Har build ek hi key se sign ho, taaki nayi APK purani ke upar install ho sake
     signingConfigs {
@@ -43,6 +47,8 @@ dependencies {
     // Spotify ka official App Remote (gaana seedha chalane ke liye)
     implementation(files("libs/spotify-app-remote.aar"))
     implementation("com.google.code.gson:gson:2.10.1")
+    implementation(files("libs/spotify-auth.aar"))
+    implementation("androidx.browser:browser:1.8.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

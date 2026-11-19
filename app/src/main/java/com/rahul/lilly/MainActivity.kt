@@ -1435,27 +1435,58 @@ class MainActivity : Activity(), LillyBus.Ui {
             }.show()
     }
 
-    /** Spotify ka official connection — ek baar "Allow" */
+    /** Spotify ka official connection — ek baar login + "Agree" */
     private fun connectSpotify() {
         if (!SpotifyRemote.installed(this)) {
             android.widget.Toast.makeText(this, "Install Spotify and log in first", android.widget.Toast.LENGTH_LONG).show()
             return
         }
-        android.widget.Toast.makeText(this, "Opening Spotify… tap Agree / Allow", android.widget.Toast.LENGTH_LONG).show()
-        SpotifyRemote.connect(this, true) { r ->
-            refreshCards()
-            if (isFinishing) return@connect
-            if (r != null) AlertDialog.Builder(this).setTitle("Spotify connected ✓")
-                .setMessage("Now say \"Lilly, Spotify par Kesariya chalao\" — the song starts by itself, no helper needed.")
-                .setPositiveButton("Test now") { _, _ -> testSpotifyPlay() }
-                .setNegativeButton("OK", null).show()
-            else AlertDialog.Builder(this).setTitle("Spotify didn't connect ✗")
-                .setMessage("Reason:\n${SpotifyRemote.lastError ?: "unknown"}\n\n" +
-                    "Check: Spotify is installed and logged in, your email is added in the Spotify developer dashboard (User Management), " +
-                    "and the Android package + SHA1 are saved there.\n\nPlease send a screenshot of this.")
-                .setPositiveButton("Try again") { _, _ -> connectSpotify() }
-                .setNegativeButton("Close", null).show()
+        // Pehle Spotify ka asli "Allow" (auth flow), phir App Remote jodo
+        val req = com.spotify.sdk.android.auth.AuthorizationRequest.Builder(
+            SpotifyRemote.CLIENT_ID, com.spotify.sdk.android.auth.AuthorizationResponse.Type.TOKEN, SpotifyRemote.REDIRECT
+        ).setScopes(arrayOf("app-remote-control", "streaming", "user-modify-playback-state", "user-read-playback-state"))
+            .setShowDialog(true).build()
+        try {
+            com.spotify.sdk.android.auth.AuthorizationClient.openLoginActivity(this, SPOTIFY_AUTH, req)
+        } catch (e: Exception) {
+            spotifyFailed("${e.javaClass.simpleName}: ${e.message}")
         }
+    }
+
+    private val SPOTIFY_AUTH = 4242
+
+    @Deprecated("Activity result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != SPOTIFY_AUTH) return
+        val res = com.spotify.sdk.android.auth.AuthorizationClient.getResponse(resultCode, data)
+        when (res.type) {
+            com.spotify.sdk.android.auth.AuthorizationResponse.Type.TOKEN -> {
+                android.widget.Toast.makeText(this, "Spotify allowed ✓ connecting…", android.widget.Toast.LENGTH_SHORT).show()
+                SpotifyRemote.connect(this, true) { r ->
+                    refreshCards()
+                    if (isFinishing) return@connect
+                    if (r != null) AlertDialog.Builder(this).setTitle("Spotify connected ✓")
+                        .setMessage("Now say \"Lilly, Spotify par Kesariya chalao\" — the song starts by itself, no helper needed.")
+                        .setPositiveButton("Test now") { _, _ -> testSpotifyPlay() }
+                        .setNegativeButton("OK", null).show()
+                    else spotifyFailed(SpotifyRemote.lastError ?: "unknown")
+                }
+            }
+            com.spotify.sdk.android.auth.AuthorizationResponse.Type.ERROR -> spotifyFailed("Login error: ${res.error}")
+            else -> spotifyFailed("Login was cancelled (${res.type})")
+        }
+    }
+
+    private fun spotifyFailed(why: String) {
+        if (isFinishing) return
+        AlertDialog.Builder(this).setTitle("Spotify didn't connect ✗")
+            .setMessage("Reason:\n$why\n\nCheck in the Spotify developer dashboard:\n" +
+                "• Redirect URI is exactly lilly://spotify-callback\n" +
+                "• Android package com.rahul.lilly with the SHA1 is saved\n" +
+                "• Your Spotify email is added in User Management\n\nPlease send a screenshot of this.")
+            .setPositiveButton("Try again") { _, _ -> connectSpotify() }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun testSpotifyPlay() {
@@ -1468,7 +1499,7 @@ class MainActivity : Activity(), LillyBus.Ui {
                         .setPositiveButton("OK", null).show()
                     return@runOnUiThread
                 }
-                SpotifyRemote.play(this, uri) { ok ->
+                SpotifyRemote.play(this, uri, showAuth = true) { ok ->
                     if (isFinishing) return@play
                     if (ok) android.widget.Toast.makeText(this, "Playing on Spotify ✓", android.widget.Toast.LENGTH_SHORT).show()
                     else AlertDialog.Builder(this).setTitle("Spotify didn't play ✗")
