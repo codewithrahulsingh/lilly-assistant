@@ -48,7 +48,62 @@ class LillyAccess : AccessibilityService() {
 
         private fun start(kind: String, query: String, ms: Long) {
             job = Job(kind, query, System.currentTimeMillis() + ms)
-            instance?.startTrying()
+            val inst = instance
+            if (inst != null) { inst.startTrying(); return }
+            // Auto mode: helper sirf is kaam ke liye kuch second ON (payment apps ke liye baaki time OFF)
+            val a = app ?: return
+            if (autoMode(a) && setSystem(a, true)) {
+                autoOn = true
+                watchAuto()
+            }
+        }
+
+        /** Service ka app context (LillyService set karta hai) */
+        @Volatile var app: Context? = null
+        @Volatile private var autoOn = false
+        private val ui = Handler(Looper.getMainLooper())
+
+        /** adb se "WRITE_SECURE_SETTINGS" mila hai — Lilly helper ko khud on/off kar sakti hai */
+        fun canAutoSwitch(ctx: Context) =
+            ctx.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        fun autoMode(ctx: Context) =
+            ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE).getBoolean("helper_auto", false) && canAutoSwitch(ctx)
+
+        /** Brain ke liye: helper abhi ON hai, ya zaroorat par khud ON ho jayega */
+        fun usable(ctx: Context) = enabled(ctx) || autoMode(ctx)
+
+        /** Accessibility list me Lilly helper jodo / hatao (sirf WRITE_SECURE_SETTINGS ke saath) */
+        fun setSystem(ctx: Context, on: Boolean): Boolean = try {
+            val cr = ctx.contentResolver
+            val me = ComponentName(ctx, LillyAccess::class.java).flattenToString()
+            val cur = (Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "")
+                .split(':').filter { it.isNotBlank() && !it.equals(me, true) }
+            val next = if (on) cur + me else cur
+            Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, next.joinToString(":"))
+            if (on) Settings.Secure.putInt(cr, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            true
+        } catch (e: Exception) { false }
+
+        /** Kaam ho gaya / time khatam — auto mode me helper wapas OFF */
+        private fun watchAuto() {
+            ui.removeCallbacksAndMessages(null)
+            val tick = object : Runnable {
+                override fun run() {
+                    val j = job
+                    val done = j == null || System.currentTimeMillis() > j.until
+                    if (!done) { ui.postDelayed(this, 1000); return }
+                    // Spotify ke "play dabao" wale check ke liye thoda ruk ke band karo
+                    ui.postDelayed({
+                        if (job == null || System.currentTimeMillis() > (job?.until ?: 0)) {
+                            job = null
+                            val a = app
+                            if (autoOn && a != null) { setSystem(a, false); autoOn = false }
+                        }
+                    }, 4000)
+                }
+            }
+            ui.postDelayed(tick, 1500)
         }
 
         /** Spotify me ye gaana search hua hai — results aate hi pehle gaane par tap */
@@ -94,6 +149,8 @@ class LillyAccess : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Auto mode me kaam ke liye ON hua — turant kaam shuru
+        if (job != null) startTrying()
     }
 
     override fun onDestroy() {

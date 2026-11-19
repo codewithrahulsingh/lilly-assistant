@@ -280,6 +280,7 @@ class LillyService : Service() {
         if (!started) {
             started = true
             brain = LillyBrain(this)
+            LillyAccess.app = applicationContext
             english = prefs.getBoolean("reply_en", false)
             restoreMutedStreams()
             initTts(useGoogle = true)
@@ -721,6 +722,15 @@ class LillyService : Service() {
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+        // Google ko pehle se batao ki ye shabd aa sakte hain (Android 13+) — "missed call" ko "misi call" na likhe
+        if (Build.VERSION.SDK_INT >= 33) {
+            putStringArrayListExtra("android.speech.extra.BIASING_STRINGS", arrayListOf(
+                "Lilly", "missed call", "call back", "redial", "WhatsApp", "Spotify", "YouTube", "WiFi", "Bluetooth",
+                "torch", "volume", "alarm", "timer", "reminder", "battery", "brightness", "calendar", "meeting",
+                "notes", "list", "weather", "message", "SMS", "hotspot", "location", "airplane mode", "silent", "vibrate",
+                "do not disturb", "notifications", "speaker", "video call", "gaali mode"
+            ))
+        }
         if (command) {
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)

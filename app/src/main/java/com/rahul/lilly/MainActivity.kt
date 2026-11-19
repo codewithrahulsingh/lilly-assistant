@@ -283,7 +283,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         wakeValue.text = sensLabel(prefs.getString("wake_sens", "normal") ?: "normal")
         val helper = LillyAccess.enabled(this)
-        spotifyValue.text = if (helper) "ON ✓ Spotify, WhatsApp send, speaker" else "OFF — tap to turn on"
+        spotifyValue.text = when {
+            LillyAccess.autoMode(this) -> "AUTO ✓ on only when needed — payments OK"
+            helper -> "ON ✓ Spotify, WhatsApp send, speaker"
+            else -> "OFF — tap to turn on"
+        }
         notifValue.text = when {
             !prefs.getBoolean("read_notifs", false) -> "OFF"
             !helper -> "Needs Lilly helper — tap"
@@ -1086,6 +1090,23 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     private fun spotifySetup() {
+        val canAuto = LillyAccess.canAutoSwitch(this)
+        if (canAuto) {
+            val auto = prefs.getBoolean("helper_auto", false)
+            AlertDialog.Builder(this).setTitle("🤖 Lilly helper — Auto mode")
+                .setMessage(
+                    (if (auto) "Auto mode is ON ✓\n\n" else "Auto mode is ready to use.\n\n") +
+                        "Lilly turns the helper ON only for the few seconds she needs it (Spotify play, WhatsApp send, speaker, WiFi switch) " +
+                        "and turns it OFF right after.\n\nSo PhonePe, GPay, Paytm and bank apps work normally the rest of the time."
+                )
+                .setPositiveButton(if (auto) "Turn auto mode OFF" else "Turn auto mode ON") { _, _ ->
+                    prefs.edit().putBoolean("helper_auto", !auto).apply()
+                    if (!auto) LillyAccess.setSystem(this, false) // abhi OFF, zaroorat par khud ON
+                    refreshCards()
+                }
+                .setNegativeButton("Close", null).show()
+            return
+        }
         if (LillyAccess.enabled(this)) {
             AlertDialog.Builder(this)
                 .setTitle("Lilly helper is ON ✓")
@@ -1121,10 +1142,10 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "3. Come back and do the steps again"
             )
             .setPositiveButton("Open settings") { _, _ -> tryStart(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .setNegativeButton("Auto mode (no payment problem)") { _, _ -> autoHelperHelp() }
             .setNeutralButton("App info") { _, _ ->
                 tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
-            .setNegativeButton("Not now", null)
             .show()
     }
 
@@ -1353,6 +1374,28 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "• App data backup is off"
             )
             .setPositiveButton("OK", null).show()
+    }
+
+    /** Ek baar computer se permission — phir helper sirf zaroorat par khud ON/OFF */
+    private fun autoHelperHelp() {
+        val cmd = "adb shell pm grant $packageName android.permission.WRITE_SECURE_SETTINGS"
+        AlertDialog.Builder(this).setTitle("🤖 Auto mode — one-time setup")
+            .setMessage(
+                "Android only lets an app switch its helper on/off by itself after a one-time permission from a computer (USB). " +
+                    "After that Lilly keeps the helper OFF and turns it ON only for a few seconds when you ask for Spotify / WhatsApp / speaker — so payment apps stay happy.\n\n" +
+                    "On your phone:\n1. Settings → About phone → tap \"Build number\" 7 times (Developer options ON)\n" +
+                    "2. Settings → Developer options → turn ON \"USB debugging\"\n\n" +
+                    "On a computer (Windows/Mac):\n3. Download \"Platform-tools\" from developer.android.com/tools/releases/platform-tools and unzip\n" +
+                    "4. Connect the phone by USB, tap \"Allow\" on the phone\n" +
+                    "5. In the platform-tools folder open a terminal and run:\n\n$cmd\n\n" +
+                    "6. Open Lilly → Lilly helper → \"Turn auto mode ON\"\n\nYou can turn USB debugging off afterwards."
+            )
+            .setPositiveButton("Copy command") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("adb", cmd))
+                android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun abuseSetup() {

@@ -846,3 +846,12 @@ class AbuseMoreTest {
         repeat(20) { org.junit.Assert.assertTrue(Abuse.reply(true, false, "bakchod").first.isNotBlank()) }
     }
 }
+
+class MishearTest {
+    @org.junit.Test fun fixes() {
+        org.junit.Assert.assertEquals(CallLogCmd("missed"), Parser.parse("misi call kitni hai"))
+        org.junit.Assert.assertEquals(CallLogCmd("redial"), Parser.parse("ri dial karo"))
+        org.junit.Assert.assertEquals("missed call kitni hai", Parser.roman("मिस्ड कॉल कितनी है"))
+        org.junit.Assert.assertTrue(Parser.parse("kal 5 baje alarm") is Cmd.Alarm)
+    }
+}

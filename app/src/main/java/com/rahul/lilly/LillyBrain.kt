@@ -330,7 +330,7 @@ class LillyBrain(private val ctx: Context) {
     // ---------- Notifications ----------
 
     private fun notificationsReply(app: String): Reply {
-        if (!LillyAccess.enabled(ctx) || !prefs.getBoolean("read_notifs", false)) {
+        if (!LillyAccess.usable(ctx) || !prefs.getBoolean("read_notifs", false)) {
             return Reply(
                 "To read your notifications, turn on “Read my notifications” in the Lilly app",
                 "नोटिफिकेशन पढ़ने के लिए लिली ऐप में रीड माय नोटिफिकेशन्स ऑन कीजिए", endChat = true
@@ -459,7 +459,7 @@ class LillyBrain(private val ctx: Context) {
         }
         val intent = if (name == "wifi" && Build.VERSION.SDK_INT >= 29) Intent(Settings.Panel.ACTION_WIFI)
         else if (name == "location") Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS) else panelIntent(name)
-        val helper = LillyAccess.enabled(ctx)
+        val helper = LillyAccess.usable(ctx)
         return if (helper) Reply(
             "Turning $label ${if (on) "on" else "off"}",
             "$labelHi ${if (on) "ऑन" else "बंद"} कर रही हूँ",
@@ -1034,7 +1034,7 @@ class LillyBrain(private val ctx: Context) {
         val pkg = waPackage() ?: return Reply("WhatsApp isn't installed on this phone", "इस फ़ोन में व्हाट्सऐप नहीं है", endChat = true, failed = true)
         val uri = Uri.parse("https://api.whatsapp.com/send?phone=${waNumber(w.phone.number)}&text=" + Uri.encode(w.text))
         val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)
-        val auto = LillyAccess.enabled(ctx)
+        val auto = LillyAccess.usable(ctx)
         val who = CallChoice.speakName(w.phone.name)
         return Reply(
             if (auto) "Sending to ${w.phone.name}" else "Your message to ${w.phone.name} is ready in WhatsApp — tap Send",
@@ -1080,7 +1080,7 @@ class LillyBrain(private val ctx: Context) {
         }
         // Contacts me entry nahi: chat kholo, aur (helper ON ho toh) call button dabao
         val chat = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=${waNumber(p.number)}")).setPackage(pkg)
-        val auto = LillyAccess.enabled(ctx)
+        val auto = LillyAccess.usable(ctx)
         return Reply(
             if (auto) "Starting a $kind with ${p.name}" else "I've opened ${p.name}'s chat — tap the call button",
             if (auto) "$who को $kindHi कर रही हूँ" else "चैट खोल दी है, कॉल बटन दबाइए",
@@ -1143,7 +1143,7 @@ class LillyBrain(private val ctx: Context) {
                 tm.placeCall(Uri.fromParts("tel", number, null), extras)
                 if (speaker) {
                     // Call screen par "Speaker" button khud dabao (har phone par chalta hai, helper ON ho toh)
-                    if (LillyAccess.enabled(ctx)) LillyAccess.pressSpeaker()
+                    if (LillyAccess.usable(ctx)) LillyAccess.pressSpeaker()
                     forceSpeaker()
                 }
                 return
@@ -1307,7 +1307,7 @@ class LillyBrain(private val ctx: Context) {
      * isliye khulne ke baad dekhte hain gaana baja ya nahi — nahi baja toh wahi dobara bhejte hain.
      */
     private fun spotifyReply(query: String, shown: String, remember: () -> Unit): Reply {
-        if (LillyAccess.enabled(ctx)) {
+        if (LillyAccess.usable(ctx)) {
             // Accessibility ON: Spotify search kholo, results aate hi pehle gaane par tap
             return Reply("Playing $shown on Spotify", "स्पॉटिफाई पर $shown चला रही हूँ", {
                 remember()

@@ -146,7 +146,19 @@ object Parser {
         """\b(?:calender|kalendar|calandar)\b""" to "calendar",
         """\b(?:mobile|mobail)\s+(?:deta|daata)\b""" to "mobile data",
         """\b(?:aeroplane|airoplane|eroplane)\s+mode\b""" to "airplane mode",
-        """\b(?:lokeshan|location|lokation)\b""" to "location"
+        """\b(?:lokeshan|location|lokation)\b""" to "location",
+        // Hindi recognizer English shabd ko Hindi jaisa likh deta hai: "misi call" = missed call
+        """\b(?:mis|misi|missi|misd|mist|misst|mised|misde|miss|missd|missed)\s*(?:call|calls|kal|kaal|kol|col|cal|kall)s?\b""" to "missed call",
+        """\b(?:ri|re|ree)\s?(?:dial|dail|dayal|daayal)\b""" to "redial",
+        """\b(?:call|kal|kaal)\s*(?:bek|baik|baek|back)\b""" to "call back",
+        """\b(?:notifi|notify|notifik|notifikeshan|notification|notifications|notifikeshans)\w*\b""" to "notifications",
+        """\b(?:brait|bright|brite)\s*(?:nes|ness|nis)\b""" to "brightness",
+        """\b(?:baitri|betri|bettery|battry|baitry|batri)\b""" to "battery",
+        """\b(?:mesej|massage|mesage|maseg|messej)\b""" to "message",
+        """\b(?:reminder|remaindar|riminder|remainder)\b""" to "reminder",
+        """\b(?:skrin\s?shot|screen\s?shot)\b""" to "screenshot",
+        """\b(?:sailent|silant|sailant)\b""" to "silent",
+        """\b(?:vaibret|vibret|vaibrate)\b""" to "vibrate"
     ).map { Regex(it.first, RegexOption.IGNORE_CASE) to it.second }
 
     fun fixSpelling(t: String): String {
