@@ -284,54 +284,68 @@ class MainActivity : Activity(), LillyBus.Ui {
         setContentView(scroll)
     }
 
-    // ================= Naya design (v8.3): Home · Settings · Help =================
+    // ================= Naya design (v8.4): Night glass + Live board =================
 
     private var pages: List<View> = emptyList()
-    private var tabViews: List<LinearLayout> = emptyList()
     private var currentTab = 0
     private var youBubble: TextView? = null
+    private var dockHome: IconView? = null
+    private var dockGear: IconView? = null
+    private var missedNum: TextView? = null
+    private var missedSub: TextView? = null
+    private var msgNum: TextView? = null
+    private var msgSub: TextView? = null
+    private var npTitle: TextView? = null
+    private var npSub: TextView? = null
+    private var npIcon: android.widget.ImageView? = null
+    private var npPlay: IconView? = null
+    private var powerDot: View? = null
+    private val switchBinds = mutableListOf<Pair<GlowSwitch, () -> Boolean>>()
+    private val tileBinds = mutableListOf<Pair<LinearLayout, () -> Boolean>>()
+    private val live = android.os.Handler(android.os.Looper.getMainLooper())
+    private val liveTick = object : Runnable {
+        override fun run() { refreshLive(); live.postDelayed(this, 2500) }
+    }
 
-    private val glassFill = Color.argb(120, 42, 26, 76)
-    private val glassEdge = Color.argb(48, 255, 255, 255)
+    private fun tf(w: Int) = Ui.font(this, w)
 
-    private fun glass(radius: Int = 24) = GradientDrawable(
-        GradientDrawable.Orientation.TL_BR,
-        intArrayOf(Color.argb(130, 52, 30, 92), Color.argb(110, 26, 16, 50))
-    ).apply { cornerRadius = dp(radius).toFloat(); setStroke(dp(1), glassEdge) }
+    private fun txt(text: String, size: Float, color: Int, weight: Int = 400) = TextView(this).apply {
+        this.text = text; textSize = size; setTextColor(color); typeface = tf(weight)
+        includeFontPadding = false
+        setLineSpacing(0f, 1.12f)
+    }
+
+    private fun glassBg(radius: Int, fill: Int = Ui.CARD, edge: Int = Ui.EDGE) = GradientDrawable().apply {
+        cornerRadius = dp(radius).toFloat(); setColor(fill); setStroke(dp(1), edge)
+    }
 
     private fun pressable(v: View) {
         v.setOnTouchListener { view, e ->
             when (e.action) {
                 android.view.MotionEvent.ACTION_DOWN -> view.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).start()
                 android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
-                    view.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
             }
             false
         }
     }
 
+    private fun appIcon(pkg: String): android.graphics.drawable.Drawable? =
+        try { packageManager.getApplicationIcon(pkg) } catch (e: Exception) { null }
+
     private fun buildModernUi() {
-        val root = android.widget.FrameLayout(this).apply {
-            background = android.graphics.drawable.LayerDrawable(arrayOf(
-                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(Color.parseColor("#0B0718"), Color.parseColor("#150A2B"), Color.parseColor("#06040D"))),
-                GradientDrawable().apply {
-                    gradientType = GradientDrawable.RADIAL_GRADIENT
-                    gradientRadius = dp(380).toFloat()
-                    setGradientCenter(0.5f, 0.22f)
-                    colors = intArrayOf(Color.argb(90, 124, 58, 237), Color.argb(0, 124, 58, 237))
-                }
-            ))
-        }
+        window.statusBarColor = Ui.INK
+        window.navigationBarColor = Ui.INK
+        val root = android.widget.FrameLayout(this)
+        root.addView(AuroraView(this), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         val holder = android.widget.FrameLayout(this)
         root.addView(holder, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-
-        pages = listOf(homePage(), settingsPage(), helpPage())
+        switchBinds.clear(); tileBinds.clear()
+        pages = listOf(homePage(), settingsPage())
         pages.forEach { holder.addView(it, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
-
-        root.addView(tabBar(), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+        root.addView(dock(), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, dp(76)).apply {
             gravity = Gravity.BOTTOM
-            setMargins(dp(16), 0, dp(16), dp(14))
+            setMargins(dp(22), 0, dp(22), dp(18))
         })
         setContentView(root)
         showTab(0, animate = false)
@@ -346,15 +360,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun pageCol() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(18), dp(16), dp(110)) // neeche tab bar ki jagah
-    }
-
-    private fun pageTitle(col: LinearLayout, title: String, sub: String) {
-        col.addView(label(title, 32f, Color.WHITE).apply {
-            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-            setPadding(dp(6), dp(6), 0, 0)
-        })
-        col.addView(label(sub, 13f, dim).apply { setPadding(dp(6), dp(2), 0, dp(14)) })
+        setPadding(dp(20), dp(16), dp(20), dp(120)) // neeche dock ki jagah
     }
 
     // ---------------- Home ----------------
@@ -362,102 +368,191 @@ class MainActivity : Activity(), LillyBus.Ui {
     private fun homePage(): View {
         val col = pageCol()
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6), 0, 0, 0)
-        }
-        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // Upar: namaste + Lilly | sunne ka haal (dabao = ON/OFF)
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        titles.addView(label(when (hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; in 17..21 -> "Good evening"; else -> "Hello" }, 13f, dim))
-        titles.addView(label("Lilly", 32f, Color.WHITE).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
-        header.addView(titles, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        power = label("", 14f, Color.WHITE, true).apply {
-            setPadding(dp(18), dp(10), dp(18), dp(10))
+        names.addView(txt(when (hour) { in 5..11 -> "Good morning, Rahul"; in 12..16 -> "Good afternoon, Rahul"; in 17..21 -> "Good evening, Rahul"; else -> "Hello, Rahul" }, 13f, Ui.DIM))
+        names.addView(txt("Lilly", 28f, Color.WHITE, 600).apply { letterSpacing = -0.02f; setPadding(0, dp(4), 0, 0) })
+        top.addView(names, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(8), dp(14), dp(8))
+            background = glassBg(20)
             setOnClickListener { togglePower() }
         }
-        pressable(power)
-        header.addView(power)
-        col.addView(header)
+        powerDot = View(this)
+        pill.addView(powerDot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { rightMargin = dp(8) })
+        power = txt("", 12.5f, Color.WHITE, 500)
+        pill.addView(power)
+        pressable(pill)
+        top.addView(pill)
+        col.addView(top)
+
+        // Lilly ki baat — bade akshar (Siri jaisa)
+        status = txt("", 25f, Color.WHITE, 300).apply { letterSpacing = -0.01f; setPadding(0, dp(26), 0, 0); maxLines = 5; ellipsize = android.text.TextUtils.TruncateAt.END }
+        col.addView(status, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        heard = txt("", 14f, Ui.MIST, 400).apply { setPadding(0, dp(12), 0, 0); visibility = View.GONE }
+        youBubble = heard
+        col.addView(heard)
 
         orb = OrbView(this).apply { setOnClickListener { sendToEngine(LillyService.ACTION_ACTIVATE) } }
-        col.addView(orb, LinearLayout.LayoutParams(dp(250), dp(250)).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(10)
-        })
-        col.addView(label("Say “Lilly” or tap the orb", 13f, dim).apply {
-            gravity = Gravity.CENTER; setPadding(0, 0, 0, dp(14))
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        col.addView(orb, LinearLayout.LayoutParams(dp(210), dp(210)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(8) })
 
-        // Baat-cheet: aapne kya bola / Lilly kya keh rahi hai
-        val chat = LinearLayout(this).apply {
+        // Bolne layak baatein (dabao = jaise boli)
+        val chipsScroll = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER }
+        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("Notifications padho" to "notifications check karo", "Missed calls" to "missed call kitni hai",
+            "Gaana chalao" to "gaana chalao", "Alarm 7 baje" to "subah 7 baje ka alarm lagao", "Aaj ka mausam" to "aaj mausam kaisa hai"
+        ).forEach { (t, cmd) ->
+            val ch = txt(t, 13f, Color.parseColor("#EDE9FE"), 400).apply {
+                setPadding(dp(15), dp(10), dp(15), dp(10))
+                background = glassBg(20, Color.argb(22, 255, 255, 255), Color.argb(40, 255, 255, 255))
+                setOnClickListener { runCommand(cmd) }
+            }
+            pressable(ch)
+            chips.addView(ch, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { rightMargin = dp(8) })
+        }
+        chipsScroll.addView(chips)
+        col.addView(chipsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) })
+
+        // Live board: missed calls | messages
+        val two = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val (mc, mn, ms) = statCard("call", "Missed calls") {
+            if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(Manifest.permission.READ_CALL_LOG), 77)
+            else runCommand("missed call kitni hai")
+        }
+        missedNum = mn; missedSub = ms
+        two.addView(mc, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { rightMargin = dp(5) })
+        val (gc, gn, gs) = statCard("chat", "New messages") {
+            if (!prefs.getBoolean("read_notifs", false) || !MediaCtl.allowed(this)) notifSetup() else runCommand("notifications check karo")
+        }
+        msgNum = gn; msgSub = gs
+        two.addView(gc, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { leftMargin = dp(5) })
+        col.addView(two, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) })
+
+        col.addView(nowPlayingCard(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) })
+        return scrollPage(col)
+    }
+
+    private fun statCard(icon: String, title: String, tap: () -> Unit): Triple<View, TextView, TextView> {
+        val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = glass(26)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
+            background = glassBg(24, Color.argb(150, 18, 14, 30), Color.argb(36, 255, 255, 255))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setOnClickListener { tap() }
         }
-        heard = label("", 16f, Color.WHITE).apply {
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.parseColor("#7C3AED"), Color.parseColor("#A855F7"))).apply {
-                cornerRadii = floatArrayOf(dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(4).toFloat(), dp(4).toFloat(), dp(18).toFloat(), dp(18).toFloat())
-            }
-            visibility = View.GONE
-        }
-        youBubble = heard
-        chat.addView(heard, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = Gravity.END; bottomMargin = dp(8) })
-        val lillyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP }
-        lillyRow.addView(TextView(this).apply {
-            text = "L"; setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.parseColor("#C084FC"), Color.parseColor("#6366F1"))).apply { shape = GradientDrawable.OVAL }
-        }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(8) })
-        status = label("", 15f, Color.parseColor("#E4DEFF")).apply {
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(40, 255, 255, 255))
-                cornerRadii = floatArrayOf(dp(4).toFloat(), dp(4).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat(), dp(18).toFloat())
-            }
-        }
-        lillyRow.addView(status, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        chat.addView(lillyRow)
-        col.addView(chat, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(IconView(this, icon, Ui.DIM, 1.8f), LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) })
+        head.addView(txt(title, 12f, Ui.DIM))
+        c.addView(head)
+        val n = txt("–", 30f, Color.WHITE, 600).apply { letterSpacing = -0.03f; setPadding(0, dp(10), 0, dp(2)) }
+        c.addView(n)
+        val s = txt("", 12f, Ui.MIST).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        c.addView(s)
+        pressable(c)
+        return Triple(c, n, s)
+    }
 
-        // Jaldi wale kaam
-        col.addView(sectionLabel("QUICK ACTIONS"))
-        val quick = listOf(
-            Triple("🎤", "Talk", null as String?),
-            Triple("🔔", "Notifications", "notifications check karo"),
-            Triple("📞", "Missed calls", "missed call kitni hai"),
-            Triple("🎵", "Play music", "gaana chalao"),
-            Triple("⏸", "Pause music", "gaana roko"),
-            Triple("🎶", "Song name", "")
-        )
-        quick.chunked(3).forEach { line ->
-            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            line.forEach { (e, t, cmd) ->
-                val b = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    background = glass(22)
-                    setPadding(dp(6), dp(14), dp(6), dp(12))
-                    isClickable = true
-                    addView(label(e, 22f, Color.WHITE).apply { gravity = Gravity.CENTER })
-                    addView(label(t, 12.5f, Color.parseColor("#E4DEFF")).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0) })
-                    setOnClickListener {
-                        when {
-                            cmd == null -> sendToEngine(LillyService.ACTION_ACTIVATE)
-                            cmd.isEmpty() -> songNow()
-                            else -> runCommand(cmd)
-                        }
+    private fun nowPlayingCard(): View {
+        val c = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.argb(200, 46, 17, 90), Color.argb(150, 18, 14, 30))).apply {
+                cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(46, 216, 180, 254))
+            }
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { if (!MediaCtl.allowed(this@MainActivity)) mediaCtlSetup() }
+        }
+        npIcon = android.widget.ImageView(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#F472B6"), Ui.DEEP)).apply { cornerRadius = dp(14).toFloat() }
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        c.addView(npIcon, LinearLayout.LayoutParams(dp(52), dp(52)))
+        val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(6), 0) }
+        npTitle = txt("Nothing playing", 14.5f, Color.WHITE, 500).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        npSub = txt("Say “gaana chalao”", 12f, Ui.DIM).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0) }
+        t.addView(npTitle); t.addView(npSub)
+        c.addView(t, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        fun ctl(kind: String, size: Int, action: () -> Unit) = IconView(this, kind, Ui.MIST).apply {
+            setOnClickListener { performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK); action() }
+        }.also { c.addView(it, LinearLayout.LayoutParams(dp(size), dp(size))) }
+        ctl("prev", 34) { media("previous") }
+        val play = android.widget.FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+            setOnClickListener {
+                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                val playing = MediaCtl.current(this@MainActivity)?.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
+                if (MediaCtl.current(this@MainActivity) == null) runCommand("gaana chalao") else media(if (playing) "pause" else "resume")
+            }
+        }
+        npPlay = IconView(this, "play", Color.BLACK)
+        play.addView(npPlay, android.widget.FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+        c.addView(play, LinearLayout.LayoutParams(dp(42), dp(42)).apply { leftMargin = dp(6); rightMargin = dp(6) })
+        ctl("next", 34) { media("next") }
+        pressable(c)
+        return c
+    }
+
+    private fun media(action: String) {
+        if (!MediaCtl.allowed(this)) { mediaCtlSetup(); return }
+        val r = MediaCtl.run(this, action, "")
+        if (r == null) android.widget.Toast.makeText(this, "Nothing is playing. Say “gaana chalao”.", android.widget.Toast.LENGTH_SHORT).show()
+        live.postDelayed({ refreshLive() }, 400)
+    }
+
+    /** Home ke live cards: missed calls, messages, chal raha gaana */
+    private fun refreshLive() {
+        if (missedNum == null) return
+        // Missed calls (aaj ke 24 ghante)
+        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED) {
+            val names = ArrayList<String>()
+            var n = 0
+            try {
+                contentResolver.query(android.provider.CallLog.Calls.CONTENT_URI,
+                    arrayOf(android.provider.CallLog.Calls.CACHED_NAME, android.provider.CallLog.Calls.NUMBER),
+                    "${android.provider.CallLog.Calls.TYPE}=? AND ${android.provider.CallLog.Calls.DATE}>?",
+                    arrayOf(android.provider.CallLog.Calls.MISSED_TYPE.toString(), (System.currentTimeMillis() - 86_400_000L).toString()),
+                    android.provider.CallLog.Calls.DATE + " DESC")?.use { cur ->
+                    while (cur.moveToNext()) {
+                        n++
+                        val nm = cur.getString(0)?.takeIf { it.isNotBlank() } ?: cur.getString(1) ?: ""
+                        if (names.size < 3 && nm.isNotBlank() && nm !in names) names.add(nm.split(" ").first())
                     }
                 }
-                pressable(b)
-                r.addView(b, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
-            }
-            col.addView(r, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { leftMargin = -dp(5); rightMargin = -dp(5) })
+            } catch (e: Exception) { }
+            missedNum?.text = n.toString()
+            missedSub?.text = if (n == 0) "None today" else names.joinToString(", ")
+        } else { missedNum?.text = "–"; missedSub?.text = "Tap to allow" }
+        // Naye messages
+        if (prefs.getBoolean("read_notifs", false) && MediaCtl.allowed(this)) {
+            val list = Inbox.recent("", 86_400_000L)
+            msgNum?.text = list.size.toString()
+            val chats = list.map { it.title }.distinct().size
+            msgSub?.text = if (list.isEmpty()) "All caught up" else "${list.map { it.app }.distinct().take(2).joinToString(", ")} · $chats chats"
+        } else { msgNum?.text = "–"; msgSub?.text = "Tap to turn on" }
+        // Chal raha gaana
+        val ctl = if (MediaCtl.allowed(this)) MediaCtl.current(this) else null
+        val md = ctl?.metadata
+        val title = md?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: md?.getString(android.media.MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+        if (ctl != null && title != null) {
+            val artist = md!!.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: ""
+            val app = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(ctl.packageName, 0)).toString() } catch (e: Exception) { "" }
+            npTitle?.text = title
+            npSub?.text = listOf(artist, app).filter { it.isNotBlank() }.joinToString(" · ")
+            val art = md!!.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART) ?: md.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
+            if (art != null) { npIcon?.setPadding(0, 0, 0, 0); npIcon?.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; npIcon?.clipToOutline = true; npIcon?.setImageBitmap(art) }
+            else { npIcon?.setPadding(dp(8), dp(8), dp(8), dp(8)); npIcon?.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE; npIcon?.setImageDrawable(appIcon(ctl.packageName)) }
+            npPlay?.set(if (ctl.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING) "pause" else "play")
+        } else {
+            npTitle?.text = "Nothing playing"
+            npSub?.text = if (MediaCtl.allowed(this)) "Tap play or say “gaana chalao”" else "Tap to allow music control"
+            npIcon?.setPadding(dp(8), dp(8), dp(8), dp(8))
+            npIcon?.setImageDrawable(appIcon("com.spotify.music"))
+            npPlay?.set("play")
         }
-        return scrollPage(col)
     }
 
     private fun togglePower() {
@@ -482,171 +577,48 @@ class MainActivity : Activity(), LillyBus.Ui {
         android.widget.Toast.makeText(this, n ?: "Nothing playing (or Music control is off)", android.widget.Toast.LENGTH_LONG).show()
     }
 
-    // ---------------- Settings ----------------
+    // ---------------- Dock ----------------
 
-    private fun sectionLabel(t: String) = label(t, 12f, dim, true).apply {
-        letterSpacing = 0.14f
-        setPadding(dp(8), dp(22), 0, dp(8))
-    }
-
-    /** Ek glass group (iPhone settings jaisa) */
-    private fun group(col: LinearLayout, title: String, tint: IntArray): Pair<LinearLayout, IntArray> {
-        col.addView(sectionLabel(title))
-        val g = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = glass(22)
-            setPadding(0, dp(4), 0, dp(4))
+    private fun dock(): View {
+        val bar = android.widget.FrameLayout(this).apply {
+            background = glassBg(38, Color.argb(215, 26, 16, 50), Color.argb(64, 216, 180, 254))
+            elevation = dp(10).toFloat()
+            clipChildren = false
         }
-        col.addView(g, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        return g to tint
-    }
-
-    /** Group ki ek line: icon · naam · haal · › — value TextView lautata hai */
-    private fun item(gp: Pair<LinearLayout, IntArray>, emoji: String, title: String, onTap: () -> Unit): TextView {
-        val (g, tint) = gp
-        if (g.childCount > 0) g.addView(View(this).apply { setBackgroundColor(Color.argb(28, 255, 255, 255)) },
-            LinearLayout.LayoutParams(MATCH_PARENT, 1).apply { leftMargin = dp(62) })
-        val value = label("", 12.5f, Color.parseColor("#B9A8F0")).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
-        val r = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(11), dp(12), dp(11))
-            isClickable = true
-            background = android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(Color.argb(50, 192, 132, 252)), null,
-                GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(18).toFloat() })
-            setOnClickListener { onTap() }
-        }
-        r.addView(label(emoji, 17f, Color.WHITE).apply {
-            gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, tint).apply { cornerRadius = dp(11).toFloat() }
-        }, LinearLayout.LayoutParams(dp(36), dp(36)))
-        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0) }
-        texts.addView(label(title, 15f, Color.WHITE))
-        texts.addView(value)
-        r.addView(texts, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        r.addView(label("›", 22f, Color.argb(110, 255, 255, 255)))
-        g.addView(r, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        return value
-    }
-
-    private fun tint(a: String, b: String) = intArrayOf(Color.parseColor(a), Color.parseColor(b))
-
-    private fun settingsPage(): View {
-        val col = pageCol()
-        pageTitle(col, "Settings", "Everything Lilly can do, in one place")
-
-        val v = group(col, "VOICE & LISTENING", tint("#A855F7", "#6D28D9"))
-        realValue = item(v, "🎤", "Lilly's voice") { chooseRealVoice() }
-        item(v, "▶️", "Hear voice") { sendToEngine(LillyService.ACTION_TEST_VOICE) }.text = "Test the current voice"
-        voiceValue = item(v, "⬇️", "Natural voice pack") { downloadVoice() }
-        matchValue = item(v, "🔐", "Only my voice") { voiceMatchSetup() }
-        item(v, "🧪", "Test voice match") { testVoiceMatch() }.text = "Say \"Lilly\" and see the score"
-        wakeValue = item(v, "👂", "Wake-up sensitivity") { chooseSensitivity() }
-        langValue = item(v, "🗣", "Listening language") { chooseLanguage() }
-        smartValue = item(v, "✍️", "Smart listening") { smartSetup() }
-        item(v, "📖", "My spellings") { showSpellings() }.text = "Lilly learns & fixes words"
-
-        val m = group(col, "MUSIC", tint("#22C55E", "#15803D"))
-        musicValue = item(m, "🎵", "Music app") { chooseMusicApp() }
-        spotifyConnValue = item(m, "🟢", "Connect Spotify") { connectSpotify() }
-        mediaCtlValue = item(m, "🎛", "Music control") { mediaCtlSetup() }
-        headValue = item(m, "🎧", "Headphone mode") { headphoneSetup() }
-        item(m, "🎶", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
-        item(m, "❓", "Which apps play by voice") { musicHelp() }.text = "No helper needed"
-
-        val c = group(col, "CALLS & MESSAGES", tint("#38BDF8", "#2563EB"))
-        lockValue = item(c, "🔒", "Lock screen call") { chooseLockMode() }
-        notifValue = item(c, "🔔", "Read my notifications") { notifSetup() }
-        item(c, "💬", "Reply without opening") { replyHelp() }.text = "WhatsApp & more"
-        scriptValue = item(c, "⌨️", "WhatsApp typing") { chooseScript() }
-        upiValue = item(c, "💳", "UPI contacts") { upiSetup() }
-
-        val a = group(col, "AUTOMATION", tint("#F59E0B", "#D97706"))
-        routinesValue = item(a, "⚡", "Routines & habits") { routinesSetup() }
-        placesValue = item(a, "📍", "Home, office & city") { showPlaces() }
-        allowedValue = item(a, "✅", "Apps Lilly can open") { chooseApps() }
-        spotifyValue = item(a, "🤖", "Lilly helper") { spotifySetup() }
-
-        val ai = group(col, "AI & MEMORY", tint("#EC4899", "#BE185D"))
-        aiValue = item(ai, "✨", "AI chat") { aiSetup() }
-        ai2Value = item(ai, "🔌", "Second AI") { ai2Setup() }
-        memoryValue = item(ai, "📒", "What Lilly remembers") { showMemory() }
-        learnedValue = item(ai, "🧠", "What Lilly learned") { showLearned() }
-        abuseValue = item(ai, "🤬", "Gaali mode") { abuseSetup() }
-
-        val p = group(col, "PHONE & PERMISSIONS", tint("#64748B", "#334155"))
-        appsValue = item(p, "📱", "Orb on every screen + apps") { appsAnywhere() }
-        lockPopupValue = item(p, "🔓", "Orb on lock screen") { lockPopupSetup() }
-        batteryValue = item(p, "🔋", "Run in background") { batterySettings() }
-        item(p, "🔕", "Hide notification") { hideNotification() }.text = "Tap to turn it off"
-
-        val d = group(col, "APPEARANCE", tint("#8B5CF6", "#EC4899"))
-        item(d, "🎨", "Design") { chooseDesign() }.text = "New ✓ — tap to go back to the old look"
-
-        return scrollPage(col)
-    }
-
-    // ---------------- Help ----------------
-
-    private fun helpPage(): View {
-        val col = pageCol()
-        pageTitle(col, "Help", "Commands, safety and updates")
-        val h = group(col, "GET STARTED", tint("#A855F7", "#6D28D9"))
-        item(h, "💡", "What you can say") { showHelp() }.text = "See all commands"
-        item(h, "📴", "Use without internet") { offlineHelp() }.text = "What works offline + setup"
-        val s = group(col, "SAFETY & UPDATES", tint("#38BDF8", "#2563EB"))
-        item(s, "🛡", "Security") { showSecurity() }.text = "How safe Lilly is"
-        updateValue = item(s, "⬆️", "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
-        val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "" }
-        col.addView(label("Lilly $ver · made for Rahul", 12f, dim).apply {
-            gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0)
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        return scrollPage(col)
-    }
-
-    // ---------------- Tab bar ----------------
-
-    private fun tabBar(): View {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = GradientDrawable().apply {
-                cornerRadius = dp(30).toFloat()
-                setColor(Color.argb(225, 24, 15, 44))
-                setStroke(dp(1), Color.argb(60, 216, 180, 254))
+        dockHome = IconView(this, "home", Color.WHITE).apply { setOnClickListener { showTab(0) } }
+        bar.addView(dockHome, android.widget.FrameLayout.LayoutParams(dp(56), dp(56), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(22) })
+        dockGear = IconView(this, "gear", Ui.MIST).apply { setOnClickListener { showTab(1) } }
+        bar.addView(dockGear, android.widget.FrameLayout.LayoutParams(dp(56), dp(56), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(22) })
+        val mic = android.widget.FrameLayout(this).apply {
+            background = android.graphics.drawable.LayerDrawable(arrayOf(
+                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Ui.INK) },
+                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#C084FC"), Color.parseColor("#7C3AED"))).apply { shape = GradientDrawable.OVAL }
+            )).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
+            elevation = dp(14).toFloat()
+            setOnClickListener {
+                performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                showTab(0); sendToEngine(LillyService.ACTION_ACTIVATE)
             }
-            elevation = dp(12).toFloat()
-            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
-        val tabs = listOf("🏠" to "Home", "⚙️" to "Settings", "❔" to "Help")
-        tabViews = tabs.mapIndexed { i, (e, t) ->
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-                setPadding(dp(8), dp(10), dp(8), dp(10))
-                addView(label(e, 16f, Color.WHITE))
-                addView(label(t, 13.5f, Color.WHITE, true).apply { setPadding(dp(6), 0, 0, 0) })
-                setOnClickListener { showTab(i) }
-            }.also { bar.addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
-        }
+        mic.addView(IconView(this, "mic", Color.WHITE, 2.1f), android.widget.FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+        pressable(mic)
+        bar.addView(mic, android.widget.FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
         return bar
     }
 
     private fun showTab(i: Int, animate: Boolean = true) {
+        if (pages.isEmpty()) return
+        val changed = currentTab != i
         currentTab = i
         pages.forEachIndexed { k, p ->
             if (k == i) {
                 p.visibility = View.VISIBLE
-                if (animate) { p.alpha = 0f; p.translationY = dp(10).toFloat(); p.animate().alpha(1f).translationY(0f).setDuration(200).start() }
+                if (animate && changed) { p.alpha = 0f; p.animate().alpha(1f).setDuration(180).start() }
             } else p.visibility = View.GONE
         }
-        tabViews.forEachIndexed { k, t ->
-            val on = k == i
-            t.background = if (on) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.parseColor("#7C3AED"), Color.parseColor("#A855F7"))).apply { cornerRadius = dp(24).toFloat() } else null
-            t.alpha = if (on) 1f else 0.6f
-        }
-        if (animate) window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        dockHome?.apply { color = if (i == 0) Color.WHITE else Ui.DIM; invalidate() }
+        dockGear?.apply { color = if (i == 1) Color.WHITE else Ui.DIM; invalidate() }
+        if (animate && changed) window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
     }
 
     @Deprecated("Deprecated in Java")
@@ -654,12 +626,188 @@ class MainActivity : Activity(), LillyBus.Ui {
         if (pages.isNotEmpty() && currentTab != 0) showTab(0) else super.onBackPressed()
     }
 
+    // ---------------- Settings ----------------
+
+    private fun groupTitle(col: LinearLayout, t: String) {
+        col.addView(txt(t, 13f, Ui.DIM, 500).apply { setPadding(dp(6), dp(24), 0, dp(10)) })
+    }
+
+    private fun group(col: LinearLayout, title: String): LinearLayout {
+        groupTitle(col, title)
+        val g = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = glassBg(22, Color.argb(150, 18, 14, 30), Color.argb(26, 255, 255, 255))
+            setPadding(0, dp(2), 0, dp(2))
+        }
+        col.addView(g, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return g
+    }
+
+    /**
+     * Ek line: icon · naam · haal · (switch ya ›). value TextView lautata hai.
+     * icon = emoji ya app ka package (asli app icon dikhega)
+     */
+    private fun item(
+        g: LinearLayout, icon: String, tint: Int, title: String,
+        toggle: Pair<() -> Boolean, (Boolean) -> Unit>? = null, onTap: () -> Unit
+    ): TextView {
+        if (g.childCount > 0) g.addView(View(this).apply { setBackgroundColor(Color.argb(18, 255, 255, 255)) },
+            LinearLayout.LayoutParams(MATCH_PARENT, 1).apply { leftMargin = dp(60) })
+        val value = txt("", 12f, Ui.DIM).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0) }
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            minimumHeight = dp(60)
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(Color.argb(40, 192, 132, 252)), null,
+                GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(20).toFloat() })
+            setOnClickListener { onTap() }
+        }
+        val pkgIcon = if (icon.contains('.')) appIcon(icon) else null
+        if (pkgIcon != null) {
+            r.addView(android.widget.ImageView(this).apply { setImageDrawable(pkgIcon) }, LinearLayout.LayoutParams(dp(32), dp(32)))
+        } else {
+            r.addView(txt(if (icon.contains('.')) "♪" else icon, 15f, Color.WHITE).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(tint) }
+            }, LinearLayout.LayoutParams(dp(32), dp(32)))
+        }
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(10), 0) }
+        texts.addView(txt(title, 14.5f, Color.WHITE))
+        texts.addView(value)
+        r.addView(texts, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        if (toggle != null) {
+            val sw = GlowSwitch(this, toggle.first()) { on -> toggle.second(on); refreshCards() }
+            switchBinds.add(sw to toggle.first)
+            r.addView(sw)
+        } else r.addView(IconView(this, "chev", Color.argb(110, 255, 255, 255), 2f), LinearLayout.LayoutParams(dp(16), dp(16)))
+        g.addView(r, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return value
+    }
+
+    /** Upar ki badi ON/OFF tiles */
+    private fun tile(row: LinearLayout, icon: String, title: String, state: () -> Boolean, set: (Boolean) -> Unit, onTap: () -> Unit): TextView {
+        val t = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            minimumHeight = dp(118)
+            setOnClickListener { onTap() }
+        }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(txt(icon, 18f, Color.WHITE), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        val sw = GlowSwitch(this, state()) { on -> set(on); refreshCards() }
+        switchBinds.add(sw to state)
+        head.addView(sw)
+        t.addView(head)
+        t.addView(View(this), LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        t.addView(txt(title, 14.5f, Color.WHITE, 500).apply { setPadding(0, dp(14), 0, 0) })
+        val value = txt("", 11.5f, Ui.MIST).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0) }
+        t.addView(value)
+        tileBinds.add(t to state)
+        pressable(t)
+        row.addView(t, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
+        return value
+    }
+
+    private fun paintTile(t: LinearLayout, on: Boolean) {
+        t.background = if (on) GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.argb(150, 139, 92, 246), Color.argb(80, 232, 121, 249))).apply {
+            cornerRadius = dp(24).toFloat(); setStroke(dp(1), Color.argb(100, 233, 213, 255))
+        } else glassBg(24, Color.argb(150, 18, 14, 30), Color.argb(30, 255, 255, 255))
+    }
+
+    private fun flip(key: String, def: Boolean) = Pair({ prefs.getBoolean(key, def) }, { on: Boolean -> prefs.edit().putBoolean(key, on).apply() })
+
+    private fun settingsPage(): View {
+        val col = pageCol()
+        col.addView(txt("Settings", 30f, Color.WHITE, 300).apply { letterSpacing = -0.02f; setPadding(dp(4), dp(10), 0, dp(14)) })
+
+        val r1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val r2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        col.addView(r1, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { leftMargin = -dp(5); rightMargin = -dp(5) })
+        col.addView(r2, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { leftMargin = -dp(5); rightMargin = -dp(5) })
+        matchValue = tile(r1, "🔐", "Only my voice", { VoiceMatch.active(this) }, { on ->
+            if (on && !(VoiceMatch.voicePrint(this).ready && VoiceMatch.modelReady(this))) voiceMatchSetup()
+            else VoiceMatch.setOn(this, on)
+        }) { voiceMatchSetup() }
+        val (sg, ss) = flip("smart_listen", true)
+        smartValue = tile(r1, "✍️", "Smart listening", sg, ss) { smartSetup() }
+        val (ag, aset) = flip("abuse_mode", false)
+        abuseValue = tile(r2, "🤬", "Gaali mode", ag, aset) { abuseSetup() }
+        headValue = tile(r2, "🎧", "Headphone mode", { prefs.getBoolean("headphone_mode", true) },
+            { on -> prefs.edit().putBoolean("headphone_mode", on).apply() }) { headphoneSetup() }
+
+        val v = group(col, "Voice")
+        realValue = item(v, "🎤", Color.parseColor("#6D28D9"), "Lilly's voice") { chooseRealVoice() }
+        item(v, "▶️", Color.parseColor("#7C3AED"), "Hear voice") { sendToEngine(LillyService.ACTION_TEST_VOICE) }.text = "Test the current voice"
+        voiceValue = item(v, "⬇️", Color.parseColor("#4C1D95"), "Natural voice pack") { downloadVoice() }
+        wakeValue = item(v, "👂", Color.parseColor("#7C3AED"), "Wake-up sensitivity") { chooseSensitivity() }
+        langValue = item(v, "🗣", Color.parseColor("#9333EA"), "Listening language") { chooseLanguage() }
+        item(v, "🧪", Color.parseColor("#5B21B6"), "Test voice match") { testVoiceMatch() }.text = "Say \"Lilly\" and see the score"
+        item(v, "📖", Color.parseColor("#6D28D9"), "My spellings") { showSpellings() }.text = "Lilly learns & fixes words"
+
+        val m = group(col, "Music")
+        spotifyConnValue = item(m, "com.spotify.music", Color.parseColor("#15803D"), "Spotify") { connectSpotify() }
+        val musicPkg = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.third ?: ""
+        musicValue = item(m, musicPkg.ifBlank { "🎵" }, Color.parseColor("#16A34A"), "Music app") { chooseMusicApp() }
+        mediaCtlValue = item(m, "🎛", Color.parseColor("#0F766E"), "Music control") { mediaCtlSetup() }
+        item(m, "🎶", Color.parseColor("#166534"), "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
+        item(m, "❓", Color.parseColor("#334155"), "Which apps play by voice") { musicHelp() }.text = "No helper needed"
+
+        val c = group(col, "Calls & messages")
+        val (ng, nset) = flip("read_notifs", false)
+        notifValue = item(c, "🔔", Color.parseColor("#2563EB"), "Read my notifications", ng to { on: Boolean ->
+            nset(on); if (on && !MediaCtl.allowed(this)) notifSetup()
+        }) { notifSetup() }
+        item(c, "com.whatsapp", Color.parseColor("#15803D"), "Reply without opening") { replyHelp() }.text = "WhatsApp & more"
+        scriptValue = item(c, "⌨️", Color.parseColor("#1D4ED8"), "WhatsApp typing") { chooseScript() }
+        lockValue = item(c, "🔒", Color.parseColor("#1E40AF"), "Lock screen call") { chooseLockMode() }
+        upiValue = item(c, "💳", Color.parseColor("#D97706"), "UPI contacts") { upiSetup() }
+
+        val a = group(col, "Automation")
+        routinesValue = item(a, "⚡", Color.parseColor("#D97706"), "Routines & habits") { routinesSetup() }
+        placesValue = item(a, "📍", Color.parseColor("#B45309"), "Home, office & city") { showPlaces() }
+        allowedValue = item(a, "✅", Color.parseColor("#15803D"), "Apps Lilly can open") { chooseApps() }
+        spotifyValue = item(a, "🤖", Color.parseColor("#475569"), "Lilly helper") { spotifySetup() }
+
+        val ai = group(col, "AI & memory")
+        aiValue = item(ai, "✨", Color.parseColor("#BE185D"), "AI chat") { aiSetup() }
+        ai2Value = item(ai, "🔌", Color.parseColor("#9D174D"), "Second AI") { ai2Setup() }
+        memoryValue = item(ai, "📒", Color.parseColor("#DB2777"), "What Lilly remembers") { showMemory() }
+        learnedValue = item(ai, "🧠", Color.parseColor("#A21CAF"), "What Lilly learned") { showLearned() }
+
+        val p = group(col, "Phone & permissions")
+        appsValue = item(p, "📱", Color.parseColor("#334155"), "Orb on every screen + apps") { appsAnywhere() }
+        lockPopupValue = item(p, "🔓", Color.parseColor("#334155"), "Orb on lock screen") { lockPopupSetup() }
+        batteryValue = item(p, "🔋", Color.parseColor("#334155"), "Run in background") { batterySettings() }
+        item(p, "🔕", Color.parseColor("#334155"), "Hide notification") { hideNotification() }.text = "Tap to turn it off"
+
+        val h = group(col, "Help")
+        item(h, "💡", Color.parseColor("#7C3AED"), "What you can say") { showHelp() }.text = "All commands"
+        item(h, "📴", Color.parseColor("#475569"), "Use without internet") { offlineHelp() }.text = "What works offline + setup"
+        item(h, "🛡", Color.parseColor("#0369A1"), "Security") { showSecurity() }.text = "How safe Lilly is"
+        updateValue = item(h, "⬆️", Color.parseColor("#6D28D9"), "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
+        item(h, "🎨", Color.parseColor("#9333EA"), "Design") { chooseDesign() }.text = "New — tap to go back to the old look"
+
+        val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "" }
+        col.addView(txt("Lilly $ver", 12f, Ui.DIM).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, 0) },
+            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return scrollPage(col)
+    }
+
+    /** Switch aur tiles ko asli haal ke saath milao */
+    private fun refreshSwitches() {
+        switchBinds.forEach { (sw, get) -> sw.setChecked(get()) }
+        tileBinds.forEach { (t, get) -> paintTile(t, get()) }
+    }
+
     // ---------------- Design badalna ----------------
 
     private fun chooseDesign() {
         AlertDialog.Builder(this)
             .setTitle("Design")
-            .setSingleChoiceItems(arrayOf("New (Home · Settings · Help)", "Classic (old, all cards on one page)"),
+            .setSingleChoiceItems(arrayOf("New", "Classic (old, all cards on one page)"),
                 if (prefs.getBoolean("ui_classic", false)) 1 else 0) { d, w ->
                 d.dismiss()
                 switchDesign(classic = w == 1)
@@ -750,16 +898,26 @@ class MainActivity : Activity(), LillyBus.Ui {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         batteryValue.text =
             if (pm.isIgnoringBatteryOptimizations(packageName)) "Allowed ✓" else "Restricted — tap to fix"
+        refreshSwitches()
+        refreshLive()
     }
 
     override fun onStatus(text: String) = runOnUiThread { status.text = text }
     override fun onHeard(text: String) = runOnUiThread {
         heard.text = text
-        if (youBubble != null) heard.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+        if (youBubble != null) {
+            heard.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+            heard.text = if (text.isBlank() || text.startsWith("You said")) text else "You said " + text.trim()
+        }
     }
     override fun onOrb(state: OrbView.State) = runOnUiThread { orb.state = state }
     override fun onLevel(level: Float) { orb.level = level }
     override fun onRunning(running: Boolean) = runOnUiThread {
+        powerDot?.let { dot ->
+            power.text = if (running) "Listening" else "Off — tap to start"
+            dot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (running) Color.parseColor("#4ADE80") else Color.parseColor("#6B6488")) }
+            return@runOnUiThread
+        }
         power.text = if (running) "●  ON" else "○  OFF"
         power.background = rounded(
             if (running) Color.parseColor("#3A1F7A") else Color.parseColor("#1C1A2E"), 50,
@@ -2408,10 +2566,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         OfflineVoice.cleanupOld(this)
         offerOfflineVoice()
         status.text = LillyBus.lastStatus.ifBlank { "Starting up…" }
-        heard.text = LillyBus.lastHeard
+        onHeard(LillyBus.lastHeard)
         orb.state = LillyBus.lastOrb
         onRunning(LillyBus.running)
         refreshCards()
+        if (missedNum != null) { live.removeCallbacks(liveTick); live.postDelayed(liveTick, 2500) }
         if (hasMic() && prefs.getBoolean("enabled", true) && !LillyBus.running) startEngine()
         if (missingPermissions().isEmpty()) {
             askSpecialPermissions()
@@ -2424,6 +2583,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     }
 
     override fun onPause() {
+        live.removeCallbacks(liveTick)
         if (LillyBus.ui === this) LillyBus.ui = null
         if (LillyBus.launcher === myLauncher) LillyBus.launcher = null
         super.onPause()
