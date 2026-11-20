@@ -492,15 +492,86 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun chooseWidget(w: Widget) {
         val cur = widgetTypes.indexOfFirst { it.first == type(w) }
-        AlertDialog.Builder(this)
-            .setTitle("Show in this widget")
-            .setSingleChoiceItems(widgetTypes.map { it.second }.toTypedArray(), cur) { d, which ->
-                prefs.edit().putString(w.pref, widgetTypes[which].first).apply()
-                d.dismiss()
-                fillWidget(w)
-                if (widgetTypes[which].first == "event" && checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED)
-                    requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
-            }.show()
+        val look = mapOf(
+            "missed" to Triple("call", "Calls you missed today", "#22C55E"),
+            "messages" to Triple("chat", "Unread chats from your apps", "#3B82F6"),
+            "alarm" to Triple("alarm", "When your next alarm rings", "#F59E0B"),
+            "battery" to Triple("battery_full", "Charge level and charging", "#10B981"),
+            "event" to Triple("event", "Next thing on your calendar", "#EC4899"),
+            "date" to Triple("today", "Today's date and day", "#8B5CF6")
+        )
+        glassSheet("Choose widget", "Long-press a widget anytime to change it",
+            widgetTypes.map { (k, label) -> val l = look[k]!!; SheetOption(l.first, label, l.second, Color.parseColor(l.third)) }, cur
+        ) { which ->
+            prefs.edit().putString(w.pref, widgetTypes[which].first).apply()
+            fillWidget(w)
+            if (widgetTypes[which].first == "event" && checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
+        }
+    }
+
+    private class SheetOption(val icon: String, val label: String, val desc: String, val tint: Int)
+
+    /** Neeche se aane wali glass sheet (purane safed/grey popup ki jagah) */
+    private fun glassSheet(title: String, sub: String?, options: List<SheetOption>, selected: Int, onPick: (Int) -> Unit) {
+        val dlg = android.app.Dialog(this)
+        dlg.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(250, 34, 20, 62), Color.argb(252, 14, 9, 28))).apply {
+                cornerRadii = floatArrayOf(dp(30).toFloat(), dp(30).toFloat(), dp(30).toFloat(), dp(30).toFloat(), 0f, 0f, 0f, 0f)
+                setStroke(dp(1), Color.argb(60, 216, 180, 254))
+            }
+            setPadding(dp(18), dp(10), dp(18), dp(26))
+        }
+        panel.addView(View(this).apply {
+            background = GradientDrawable().apply { cornerRadius = dp(3).toFloat(); setColor(Color.argb(70, 255, 255, 255)) }
+        }, LinearLayout.LayoutParams(dp(40), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(16) })
+        panel.addView(txt(title, 20f, Color.WHITE, 600).apply { setPadding(dp(6), 0, 0, 0) })
+        if (sub != null) panel.addView(txt(sub, 12.5f, Ui.DIM).apply { setPadding(dp(6), dp(6), 0, dp(14)) })
+        options.forEachIndexed { i, o ->
+            val on = i == selected
+            val r = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(10), dp(14), dp(10))
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(Color.argb(50, 192, 132, 252)),
+                    if (on) glassBg(20, Color.argb(40, 167, 139, 250), Color.argb(90, 196, 181, 253)) else null,
+                    GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(20).toFloat() })
+                setOnClickListener {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                    onPick(i)
+                    postDelayed({ dlg.dismiss() }, 120)
+                }
+            }
+            r.addView(appTile(o.icon, o.tint, 40), LinearLayout.LayoutParams(dp(40), dp(40)))
+            val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0) }
+            t.addView(txt(o.label, 15f, Color.WHITE, if (on) 600 else 400))
+            t.addView(txt(o.desc, 12f, Ui.DIM).apply { setPadding(0, dp(4), 0, 0) })
+            r.addView(t, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            // Chuna hua: begni gola + tick; baaki: patla ghera
+            r.addView(sym(if (on) "check_circle" else "", 24f, Color.parseColor("#C4B5FD")).apply {
+                if (!on) background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.argb(70, 255, 255, 255)) }
+            }, LinearLayout.LayoutParams(dp(24), dp(24)))
+            panel.addView(r, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(4) })
+        }
+        dlg.setContentView(panel)
+        dlg.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setLayout(MATCH_PARENT, WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.55f)
+            if (Build.VERSION.SDK_INT >= 31) {
+                addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                attributes = attributes.apply { blurBehindRadius = dp(16) }
+            }
+        }
+        // Neeche se upar aana
+        panel.translationY = dp(400).toFloat()
+        dlg.setOnShowListener { panel.animate().translationY(0f).setDuration(260).setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start() }
+        dlg.show()
     }
 
     private fun widgetTap(t: String) {
@@ -931,13 +1002,10 @@ class MainActivity : Activity(), LillyBus.Ui {
     // ---------------- Design badalna ----------------
 
     private fun chooseDesign() {
-        AlertDialog.Builder(this)
-            .setTitle("Design")
-            .setSingleChoiceItems(arrayOf("New", "Classic (old, all cards on one page)"),
-                if (prefs.getBoolean("ui_classic", false)) 1 else 0) { d, w ->
-                d.dismiss()
-                switchDesign(classic = w == 1)
-            }.show()
+        glassSheet("Design", "You can switch back anytime", listOf(
+            SheetOption("auto_awesome", "New", "Home, widgets and glass settings", Color.parseColor("#8B5CF6")),
+            SheetOption("palette", "Classic", "The old look, all cards on one page", Color.parseColor("#64748B"))
+        ), if (prefs.getBoolean("ui_classic", false)) 1 else 0) { w -> if ((w == 1) != prefs.getBoolean("ui_classic", false)) switchDesign(classic = w == 1) }
     }
 
     private fun switchDesign(classic: Boolean) {
