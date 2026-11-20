@@ -75,13 +75,15 @@ class BargeIn(private val model: Model, private val onNumber: (Int) -> Unit) {
     }
 
     /** Pakka (bharosa >= 0.9) aur akela ginti shabd ho tabhi — Lilly ki apni awaaz ke tukde na pakde */
-    private fun best(json: String?): Int? = try {
-        val arr = JSONObject(json ?: "{}").optJSONArray("result") ?: return null
-        val words = (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("word") != "[unk]" }
-        val nums = words.filter { WORDS.containsKey(it.optString("word")) }
-        if (nums.size != 1 || words.size > 2) null
-        else nums[0].takeIf { it.optDouble("conf", 0.0) >= 0.9 }?.let { WORDS[it.optString("word")] }
-    } catch (e: Exception) { null }
+    private fun best(json: String?): Int? {
+        return try {
+            val arr = JSONObject(json ?: "{}").optJSONArray("result") ?: return null
+            val words = (0 until arr.length()).map { arr.getJSONObject(it) }.filter { it.optString("word") != "[unk]" }
+            val nums = words.filter { WORDS.containsKey(it.optString("word")) }
+            if (nums.size != 1 || words.size > 2) null
+            else nums[0].takeIf { it.optDouble("conf", 0.0) >= 0.9 }?.let { WORDS[it.optString("word")] }
+        } catch (e: Exception) { null }
+    }
 
     fun stop() {
         running = false
