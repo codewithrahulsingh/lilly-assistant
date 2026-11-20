@@ -929,3 +929,12 @@ class ActionsTest {
         org.junit.Assert.assertTrue(Parser.parse("10 minute baad yaad dilana") is Cmd.Alarm)
     }
 }
+
+class UpiWordsTest {
+    @org.junit.Test fun amounts() {
+        org.junit.Assert.assertEquals(UpiCmd("kunal", "1"), Parser.parse("kunal ko ₹1 bhejo"))
+        org.junit.Assert.assertEquals(UpiCmd("kunal", "1"), Parser.parse("kunal ko ek rupaya bhejo"))
+        org.junit.Assert.assertEquals(UpiCmd("kunal", "500"), Parser.parse("kunal ko paanch sau rupaye bhejo"))
+        org.junit.Assert.assertEquals(UpiCmd("kunal", ""), Parser.parse("kunal ko paise bhejo"))
+    }
+}

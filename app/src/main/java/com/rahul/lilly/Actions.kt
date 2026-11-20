@@ -72,16 +72,33 @@ object Actions {
 
     // ---------------- 9. UPI ----------------
 
-    private fun upi(t: String): Cmd? {
-        val rs = """(?:rupaye|rupaiye|rupay|rupees|rupee|rs|inr|₹)?"""
-        Regex("""^(.+?)\s+ko\s+(\d{1,6})\s*$rs\s*(?:bhejo|bhej do|pay karo|pay kar do|de do|transfer karo|send karo|upi karo)$""").find(t)?.let {
+    private val numWord = mapOf("ek" to 1, "do" to 2, "teen" to 3, "char" to 4, "chaar" to 4, "paanch" to 5, "panch" to 5, "chhe" to 6, "che" to 6,
+        "saat" to 7, "aath" to 8, "nau" to 9, "das" to 10, "bees" to 20, "tees" to 30, "chalis" to 40, "pachas" to 50, "pachaas" to 50,
+        "one" to 1, "two" to 2, "three" to 3, "five" to 5, "ten" to 10, "twenty" to 20, "fifty" to 50, "hundred" to 100)
+
+    /** "ek rupaya" -> "1 rupaya", "paanch sau" -> "500", "do hazaar" -> "2000" */
+    private fun wordAmounts(t: String): String =
+        Regex("""\b(ek|do|teen|char|chaar|paanch|panch|chhe|che|saat|aath|nau|das|bees|tees|chalis|pachas|pachaas|one|two|three|five|ten|twenty|fifty|hundred)(?:\s+(sau|hazaar|hazar|hundred|thousand))?\s+(?=rupay|rupaye|rupaiye|rupees?|rs\b|bhejo|bhej)""").replace(t) { m ->
+            val n = numWord[m.groupValues[1]] ?: return@replace m.value
+            val mul = when (m.groupValues[2]) { "sau", "hundred" -> 100; "hazaar", "hazar", "thousand" -> 1000; else -> 1 }
+            "${n * mul} "
+        }.replace(Regex("""\b(sau|hazaar|hazar)\s+(?=rupay|rupaye|rupees?|rs\b)""")) { m -> if (m.groupValues[1] == "sau") "100 " else "1000 " }
+
+    private fun upi(t0: String): Cmd? {
+        val t = wordAmounts(t0)
+        val cur = """(?:₹|rs\.?|inr|rupees?|rupaye|rupaiye|rupay|rupaya)"""
+        val amt = """(?:$cur\s*)?(\d{1,6})\s*(?:$cur)?"""
+        val send = """(?:bhejo|bhej do|bhejna hai|bhej de|pay karo|pay kar do|de do|transfer karo|transfer kar do|send karo|send kar do|upi karo|dal do|daal do)"""
+        Regex("""^(.+?)\s+(?:ko|ke account me|ke account mein)\s+$amt\s*$send$""").find(t)?.let {
             return UpiCmd(it.groupValues[1].trim(), it.groupValues[2])
         }
-        Regex("""^(?:pay|send|transfer)\s+(?:rs\s*|₹\s*)?(\d{1,6})\s*$rs\s+to\s+(.+)$""").find(t)?.let {
-            return UpiCmd(it.groupValues[2].trim(), it.groupValues[1])
-        }
-        Regex("""^(?:pay|send money to)\s+(.+?)\s+(?:rs\s*|₹\s*)?(\d{1,6})\s*$rs$""").find(t)?.let {
-            return UpiCmd(it.groupValues[1].trim(), it.groupValues[2])
+        Regex("""^$amt\s+(.+?)\s+ko\s+$send$""").find(t)?.let { return UpiCmd(it.groupValues[2].trim(), it.groupValues[1]) }
+        Regex("""^(?:pay|send|transfer)\s+$amt\s+to\s+(.+)$""").find(t)?.let { return UpiCmd(it.groupValues[2].trim(), it.groupValues[1]) }
+        Regex("""^(?:pay|send money to)\s+(.+?)\s+$amt$""").find(t)?.let { return UpiCmd(it.groupValues[1].trim(), it.groupValues[2]) }
+        // Amount nahi bola: "Kunal ko paise bhejo" — poochh lenge
+        Regex("""^(.+?)\s+ko\s+(?:paise|paisa|payment|money)\s+$send$|^(?:pay|send money to)\s+(\S+(?:\s\S+)?)$""").find(t)?.let {
+            val who = it.groupValues[1].ifBlank { it.groupValues[2] }.trim()
+            if (who.isNotBlank()) return UpiCmd(who, "")
         }
         return null
     }

@@ -134,7 +134,7 @@ object Smart {
 
     private val actionWord = Regex(
         """\b(call|ghanti|dial|whatsapp|whatsap|watsapp|message|msg|sms|spotify|youtube|gaana|gana|gaane|gane|song|songs|music|""" +
-            """play|chalao|bajao|sunao|lagao|kholo|open|alarm|timer|reminder|yaad dila|torch|volume|wifi|bluetooth|brightness|navigate|rasta)\b"""
+            """play|chalao|bajao|sunao|lagao|kholo|open|alarm|timer|reminder|yaad dila|torch|volume|wifi|bluetooth|brightness|navigate|rasta|bhejo|bhej do|pay|paise|rupaye|rupees|upi|selfie|photo|screenshot)\b"""
     )
 
     /** Bola hua phone ka koi kaam lagta hai (AI ki baat-cheet nahi) */

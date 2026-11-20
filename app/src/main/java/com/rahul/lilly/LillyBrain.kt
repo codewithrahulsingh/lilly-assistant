@@ -375,6 +375,8 @@ class LillyBrain(private val ctx: Context) {
     }
 
     private fun upiReply(c: UpiCmd): Reply {
+        if (c.amount.isBlank()) return Reply("How much should I send to ${c.target}? Say: “${c.target} ko 500 bhejo”",
+            "${CallChoice.speakName(c.target)} को कितने रुपये भेजूँ? बोलिए: ${c.target} को पाँच सौ भेजो", endChat = false)
         val ids = upiIds()
         val w = Parser.normName(c.target)
         val hit = ids.entries.firstOrNull { Parser.normName(it.key) == w } ?: ids.entries.firstOrNull { Parser.normName(it.key).contains(w) || w.contains(Parser.normName(it.key)) }

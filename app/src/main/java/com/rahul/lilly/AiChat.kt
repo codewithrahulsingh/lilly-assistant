@@ -81,7 +81,7 @@ object AiChat {
             "Examples: 'boss ko ghanti maaro' -> CMD: call boss. 'kuch romantic sunao spotify pe' -> CMD: play romantic songs on spotify. " +
             "'andhera hai roshni karo' -> CMD: torch on. " +
             "'whatsapp par nandu ko bol do paise dal de' -> CMD: send a whatsapp to nandu saying paise dal de. " +
-            "'kal subah jaldi uthana hai 6 baje' -> CMD: set an alarm for 6 am. Use CMD only for these phone actions."
+            "'kunal ko ek rupaya bhej do' -> CMD: pay 1 to kunal. 'kal subah jaldi uthana hai 6 baje' -> CMD: set an alarm for 6 am. Use CMD only for these phone actions."
 
     /** code: HTTP status (0 = internet/connection), detail: server ka apna message */
     class AiError(val code: Int, val detail: String) : Exception("HTTP $code $detail")
