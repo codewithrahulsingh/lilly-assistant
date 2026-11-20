@@ -671,6 +671,7 @@ object Parser {
         teachCmd(t)?.let { return it }
 
         Extras.note(t)?.let { return it }
+        Extras.sleep(t)?.let { return it }
 
         // Yaaddasht: "yaad rakhna ki…" / "remember that…" / "bhool jao ki…" / "mere baare me kya yaad hai"
         memoryCmd(t)?.let { return it }

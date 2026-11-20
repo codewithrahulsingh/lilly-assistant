@@ -281,6 +281,7 @@ class LillyService : Service() {
             started = true
             brain = LillyBrain(this)
             LillyAccess.app = applicationContext
+            watchHeadphones()
             english = prefs.getBoolean("reply_en", false)
             restoreMutedStreams()
             initTts(useGoogle = true)
@@ -965,7 +966,7 @@ class LillyService : Service() {
     private var choiceWaits = 0
     private var heardAny = false
 
-    private fun activate(fromTap: Boolean) {
+    private fun activate(fromTap: Boolean, greetEn: String = "Yes Rahul, how can I help?", greetHi: String = "हाँ राहुल, बोलो क्या करूँ") {
         if (mode == Mode.SPEAKING || mode == Mode.COMMAND) return
         wokeByVoice = !fromTap
         heardAny = false
@@ -977,7 +978,7 @@ class LillyService : Service() {
         followUp = false
         aiHistory.clear()
         holdAudioFocus(true)
-        sayBi("Yes Rahul, how can I help?", "हाँ राहुल, बोलो क्या करूँ") { listen(Mode.COMMAND) }
+        sayBi(greetEn, greetHi) { listen(Mode.COMMAND) }
     }
 
     // ---------------- Siri jaisa popup (lock screen par bhi) ----------------
@@ -1240,6 +1241,46 @@ class LillyService : Service() {
         }.start()
     }
 
+    // ---------------- Headphone / Bluetooth mode ----------------
+
+    private var headphoneCb: android.media.AudioDeviceCallback? = null
+    private var headphoneSince = 0L
+
+    private fun isHeadphone(d: android.media.AudioDeviceInfo): Boolean {
+        if (!d.isSink) return false
+        val t = d.type
+        return t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET || t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+            t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || t == android.media.AudioDeviceInfo.TYPE_USB_HEADSET ||
+            (Build.VERSION.SDK_INT >= 31 && t == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET)
+    }
+
+    /** Earphone / Bluetooth lagte hi: "Headphones lag gaye, bolo kya karun" + seedha sunna (Lilly bole bina) */
+    private fun watchHeadphones() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        headphoneSince = System.currentTimeMillis()
+        val cb = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) {
+                // Shuru me Android pehle se lage devices bhi bhejta hai — unhe chhodo
+                if (System.currentTimeMillis() - headphoneSince < 3000) return
+                if (added?.any { isHeadphone(it) } != true) return
+                if (!prefs.getBoolean("headphone_mode", true)) return
+                if (mode != Mode.WAKE || micPaused) return
+                handler.postDelayed({
+                    if (mode != Mode.WAKE) return@postDelayed
+                    if (prefs.getBoolean("headphone_music", false) && !am.isMusicActive) {
+                        am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+                        am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+                        sayBi("Headphones connected, playing your music", "हेडफ़ोन लग गए, गाना चला रही हूँ") { listen(Mode.WAKE) }
+                    } else {
+                        activate(fromTap = false, greetEn = "Headphones connected. What can I do?", greetHi = "हेडफ़ोन लग गए, बोलिए क्या करूँ?")
+                    }
+                }, 1500)
+            }
+        }
+        headphoneCb = cb
+        try { am.registerAudioDeviceCallback(cb, handler) } catch (e: Exception) { }
+    }
+
     // ---------------- Cleanup ----------------
 
     private fun shutdown() {
@@ -1258,6 +1299,8 @@ class LillyService : Service() {
         try { recognizer?.cancel() } catch (e: Exception) { }
         recognizer?.destroy()
         recognizer = null
+        headphoneCb?.let { try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(it) } catch (e: Exception) { } }
+        headphoneCb = null
         realVoice.stop()
         OfflineVoice.stop()
         tts?.stop()

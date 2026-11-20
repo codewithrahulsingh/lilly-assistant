@@ -127,6 +127,7 @@ class LillyBrain(private val ctx: Context) {
         answerPendingWa(heard)?.let { return it }
         answerPendingCall(heard)?.let { return it }
         answerPendingAlarm(heard)?.let { return it }
+        answerPendingReply(heard)?.let { return it }
         // Google ke kisi bhi andaze me gaali ho toh pakdo
         abuseReply(heard.firstOrNull { Abuse.has(Parser.normalize(it)) || Abuse.toggle(Parser.normalize(it)) != null } ?: heard.first())?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
@@ -241,7 +242,8 @@ class LillyBrain(private val ctx: Context) {
             is NavigateCmd -> navigateReply(main)
             is NearbyCmd -> nearbyReply(main.what)
             is SaveAddressCmd -> saveAddressReply(main)
-            is NotificationsCmd -> notificationsReply(main.app)
+            is NotificationsCmd -> if (MediaCtl.allowed(ctx)) inboxReply(main.app, main.who) else notificationsReply(main.app)
+            is ReplyCmd -> replyCmdReply(main)
             is RoutineCmd -> routineReply(main.kind)
             is WeatherCmd -> Reply("One second…", "एक सेकंड", later = { weatherReply(main.day) })
             is SettingCmd -> settingReply(main)
@@ -329,6 +331,107 @@ class LillyBrain(private val ctx: Context) {
     }
 
     // ---------- Notifications ----------
+
+    // ---------- Messages: padhna + bina WhatsApp khole reply (notification ke "Reply" se) ----------
+
+    private fun inboxReply(app: String, who: String): Reply {
+        if (!prefs.getBoolean("read_notifs", false)) return Reply(
+            "To read your messages, turn on “Read my notifications” in the Lilly app",
+            "मैसेज पढ़ने के लिए लिली ऐप में रीड माय नोटिफिकेशन्स ऑन कीजिए", endChat = true
+        )
+        var list = Inbox.recent(app, 12 * 60 * 60 * 1000L)
+        if (who.isNotBlank()) {
+            val w = Parser.normName(who)
+            list = list.filter { Parser.normName(it.title).contains(w) }
+            if (list.isEmpty()) return Reply("No new message from $who", "${CallChoice.speakName(who)} का कोई नया मैसेज नहीं है", endChat = true)
+        }
+        if (list.isEmpty()) return Reply(
+            if (app.isBlank()) "No new messages" else "No new WhatsApp messages",
+            if (app.isBlank()) "कोई नया मैसेज नहीं है" else "व्हाट्सऐप पर कोई नया मैसेज नहीं है", endChat = true
+        )
+        val top = list.take(5)
+        val lines = top.joinToString("\n") { "• ${it.app}: ${it.title}${if (it.text.isNotBlank()) " — " + it.text else ""}" }
+        fun say(n: Inbox.Msg, hi: Boolean): String {
+            val w = CallChoice.speakName(n.title)
+            val body = n.text.take(160)
+            return if (hi) "$w: $body" else "$w says: $body"
+        }
+        val canReply = top.first().reply != null
+        // Pichhli baat yaad: ab sirf "reply karo ki…" bolo
+        lastReadFrom = top.first().title
+        return Reply(
+            "${list.size} new:\n$lines" + if (canReply) "\n\nSay “reply karo ki …” to answer." else "",
+            top.joinToString("। ") { say(it, true) } + if (canReply) "। जवाब देना हो तो बोलिए: रिप्लाई करो कि…" else "",
+            endChat = !canReply,
+            spokenEn = top.joinToString(". ") { say(it, false) } + if (canReply) ". Say reply, and your message." else ""
+        )
+    }
+
+    private var lastReadFrom: String? = null
+
+    private data class PendingReply(val msg: Inbox.Msg, var text: String, var at: Long)
+    private var pendingReply: PendingReply? = null
+
+    private fun replyCmdReply(c: ReplyCmd): Reply {
+        if (!MediaCtl.allowed(ctx) || !prefs.getBoolean("read_notifs", false)) {
+            // Purana tareeka: WhatsApp chat khol ke message likh do
+            if (c.who.isNotBlank()) return decideInner(listOf("whatsapp ${c.who} ko message bhejo ki ${c.text}"), false)
+            return Reply("To reply without opening WhatsApp, turn on Music control and Read my notifications in the Lilly app",
+                "बिना व्हाट्सऐप खोले जवाब के लिए लिली ऐप में म्यूज़िक कंट्रोल और रीड माय नोटिफिकेशन्स ऑन कीजिए", endChat = true)
+        }
+        val m = Inbox.findReply(c.who.ifBlank { lastReadFrom ?: "" }) ?: Inbox.findReply(c.who)
+            ?: return if (c.who.isNotBlank() && c.text.isNotBlank())
+                decideInner(listOf("whatsapp ${c.who} ko message bhejo ki ${c.text}"), false)
+            else Reply("There's no new message to reply to", "जवाब देने के लिए कोई नया मैसेज नहीं है", endChat = true)
+        val p = PendingReply(m, if (c.text.isBlank()) "" else messageText(c.text), System.currentTimeMillis())
+        pendingReply = p
+        val who = CallChoice.speakName(m.title)
+        if (p.text.isBlank()) return Reply("What should I reply to ${m.title}?", "$who को क्या जवाब दूँ?", endChat = false)
+        return Reply("Reply to ${m.title}:\n“${p.text}”\n\nSay yes to send.", "$who को भेजूँ: ${p.text}?", endChat = false,
+            spokenEn = "Reply to $who: ${p.text}?")
+    }
+
+    private fun answerPendingReply(heard: List<String>): Reply? {
+        val p = pendingReply ?: return null
+        if (System.currentTimeMillis() - p.at > 60_000) { pendingReply = null; return null }
+        val n = Parser.normalize(heard.first())
+        if (Regex("""^(no|nahi|nahin|na|cancel|mat bhejo|rehne do|chhodo)$""").matches(n)) {
+            pendingReply = null
+            return Reply("Okay, not sending", "ठीक है, नहीं भेजती", endChat = true)
+        }
+        if (p.text.isBlank()) {
+            p.text = messageText(Parser.stripWakeWord(heard.first()))
+            p.at = System.currentTimeMillis()
+            val who = CallChoice.speakName(p.msg.title)
+            return Reply("Reply to ${p.msg.title}:\n“${p.text}”\n\nSay yes to send.", "$who को भेजूँ: ${p.text}?", endChat = false)
+        }
+        if (yesRe.matches(n)) {
+            pendingReply = null
+            val ok = Inbox.send(ctx, p.msg, p.text)
+            return if (ok) Reply("Sent to ${p.msg.title} ✓", "${CallChoice.speakName(p.msg.title)} को भेज दिया", endChat = true)
+            else Reply("That message can't be replied from here any more. Opening WhatsApp", "यहाँ से जवाब नहीं जा पाया", endChat = true, failed = true)
+        }
+        // Naya message bola — wahi rakh ke dobara poochho
+        p.text = messageText(Parser.stripWakeWord(heard.first()))
+        p.at = System.currentTimeMillis()
+        return Reply("Reply to ${p.msg.title}:\n“${p.text}”\n\nSay yes to send.", "${CallChoice.speakName(p.msg.title)} को भेजूँ: ${p.text}?", endChat = false)
+    }
+
+    // ---------- Sleep timer ----------
+
+    private val sleepHandler = Handler(Looper.getMainLooper())
+    private val sleepStop = Runnable {
+        mediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE)
+        if (MediaCtl.allowed(ctx)) try { MediaCtl.run(ctx, "pause") } catch (e: Exception) { }
+    }
+
+    private fun sleepReply(c: MusicCmd): Reply {
+        sleepHandler.removeCallbacks(sleepStop)
+        if (c.action == "sleep_cancel") return Reply("Sleep timer cancelled", "स्लीप टाइमर हटा दिया", endChat = true)
+        val sec = c.arg.toIntOrNull() ?: 1800
+        sleepHandler.postDelayed(sleepStop, sec * 1000L)
+        return Reply("Okay, music will stop in ${TimeParse.durationLabel(sec)}", "ठीक है, ${TimeParse.durationLabelHi(sec)} बाद गाना बंद कर दूँगी", endChat = true)
+    }
 
     private fun notificationsReply(app: String): Reply {
         if (!LillyAccess.usable(ctx) || !prefs.getBoolean("read_notifs", false)) {
@@ -1266,6 +1369,7 @@ class LillyBrain(private val ctx: Context) {
         ((prefs.getString("music_app", "") ?: "").let { it == "spotify" || it.isBlank() } || learner.musicApp == "spotify")
 
     private fun musicCmdReply(c: MusicCmd): Reply {
+        if (c.action == "sleep" || c.action == "sleep_cancel") return sleepReply(c)
         val (en, hi) = when (c.action) {
             "shuffle_on" -> "Shuffle on" to "शफ़ल ऑन कर दिया"
             "shuffle_off" -> "Shuffle off" to "शफ़ल बंद कर दिया"

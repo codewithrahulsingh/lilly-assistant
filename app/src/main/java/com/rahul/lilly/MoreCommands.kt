@@ -13,7 +13,7 @@ data class NearbyCmd(val what: String) : Cmd()
 data class SaveAddressCmd(val kind: String, val address: String) : Cmd()
 
 /** "Kiska message aaya?" — app = "" (sab) ya "whatsapp" */
-data class NotificationsCmd(val app: String = "") : Cmd()
+data class NotificationsCmd(val app: String = "", val who: String = "") : Cmd()
 
 /** "Good morning" / "Good night" */
 data class RoutineCmd(val kind: String) : Cmd()
@@ -190,6 +190,15 @@ object MoreCommands {
     // ---------------- Notifications / routine / mausam ----------------
 
     private fun notifications(t: String): Cmd? {
+        // "Rahul ka message padho" / "Rahul ne kya bheja" / "what did Rahul say"
+        Regex("""^(.+?)\s+(?:ka|ki|ke)\s+(?:message|messages|msg|mesej)\s*(?:padho|padh do|batao|bata do|sunao|kya hai|kya aaya|dikhao|read karo)?$""").find(t)?.let {
+            val w = it.groupValues[1].trim()
+            if (w !in setOf("kis", "kiska", "kiske", "kisi", "koi", "whatsapp", "mere", "meri", "mera")) return NotificationsCmd("", w)
+        }
+        Regex("""^(.+?)\s+ne\s+kya\s+(?:bheja|likha|bola|message kiya)(?:\s+hai)?$|^what did\s+(.+?)\s+(?:say|send|message|text)(?: me)?$|^read\s+(.+?)'?s\s+messages?$""").find(t)?.let {
+            val w = it.groupValues.drop(1).firstOrNull { g -> g.isNotBlank() }?.trim() ?: ""
+            if (w.isNotBlank()) return NotificationsCmd("", w)
+        }
         val hit = Regex(
             """kiska message|kis ka message|kiske message|koi message aaya|koi naya message|message aaya kya|""" +
                 """read (?:my |the )?(?:notifications|messages)|(?:any|new) (?:new )?messages|who (?:messaged|texted) me|""" +

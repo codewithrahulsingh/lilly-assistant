@@ -52,6 +52,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var musicValue: TextView
     private lateinit var spotifyConnValue: TextView
     private lateinit var mediaCtlValue: TextView
+    private lateinit var headValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -245,6 +246,10 @@ class MainActivity : Activity(), LillyBus.Ui {
         spotifyConnValue = card(r15, "🟢", "Connect Spotify") { connectSpotify() }
         card(r15, "🎧", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
 
+        val r17 = row(col)
+        headValue = card(r17, "🎧", "Headphone mode") { headphoneSetup() }
+        card(r17, "💬", "Reply without opening") { replyHelp() }.text = "WhatsApp & more"
+
         val r16 = row(col)
         mediaCtlValue = card(r16, "🎛", "Music control") { mediaCtlSetup() }
         card(r16, "🎶", "Song name now") {
@@ -293,6 +298,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        headValue.text = when {
+            !prefs.getBoolean("headphone_mode", true) -> "OFF"
+            prefs.getBoolean("headphone_music", false) -> "ON ✓ plays music when plugged in"
+            else -> "ON ✓ asks what to do when plugged in"
+        }
         mediaCtlValue.text = if (MediaCtl.allowed(this)) "ON ✓ all music apps" else "Tap to allow (no helper needed)"
         spotifyConnValue.text = if (SpotifyRemote.authorized(this)) "Connected ✓ plays songs directly" else "Tap once — then songs play directly"
         musicValue.text = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.second?.let { "$it" } ?: "Auto (last one you used)"
@@ -311,7 +321,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         notifValue.text = when {
             !prefs.getBoolean("read_notifs", false) -> "OFF"
-            !helper -> "Needs Lilly helper — tap"
+            !MediaCtl.allowed(this) && !helper -> "Needs Music control — tap"
             else -> "ON ✓"
         }
         scriptValue.text = if (prefs.getString("msg_script", "spoken") == "roman") "Hinglish (Roman letters)" else "As you speak (हिंदी / English)"
@@ -1067,13 +1077,13 @@ class MainActivity : Activity(), LillyBus.Ui {
                 "When this is on, Lilly keeps your latest notifications (like WhatsApp messages) in memory, " +
                     "so you can ask \"Kiska message aaya?\" or \"Read my notifications\".\n\n" +
                     "• Kept only in memory, never saved or sent anywhere, cleared when Lilly stops\n" +
-                    "• Needs \"Lilly helper\" to be on\n\n" +
+                    "• Needs \"Music control\" to be on (no helper needed)\n\n" +
                     "It's ${if (on) "ON" else "OFF"} now."
             )
             .setPositiveButton(if (on) "Turn off" else "Turn on") { _, _ ->
                 prefs.edit().putBoolean("read_notifs", !on).apply()
                 refreshCards()
-                if (!on && !LillyAccess.enabled(this)) spotifySetup()
+                if (!on && !MediaCtl.allowed(this)) mediaCtlSetup()
             }
             .setNegativeButton("Close", null)
             .show()
@@ -1338,6 +1348,8 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "✨  NEW: \"Torch jalao aur volume badhao\" — two things at once",
                     "✨  NEW: after small jobs (torch, time…) just keep talking — no need to say Lilly again",
                     "📵  \"Kisne call kiya tha?\" / \"Missed calls\" / \"Call back\" / \"Redial\"",
+                    "💬  \"Rahul ka message padho\" → \"Reply karo ki 5 minute mein aata hoon\" (WhatsApp khule bina)",
+                    "😴  \"30 minute baad gaana band karo\" / \"Sleep timer band karo\"",
                     "🎵  \"Gaana band karo\" / \"Gaana wapas chalao\" / \"Agla gaana\" / \"Pichla gaana\"",
                     "🎵  \"Ye kaunsa gaana hai?\" / \"Ye gaana like karo\" / \"Iske baad Kesariya lagao\"",
                     "🎵  \"Shuffle on karo\" / \"Is gaane ko repeat karo\" / \"Gaana shuru se chalao\" / \"30 second aage karo\"",
@@ -1522,6 +1534,46 @@ class MainActivity : Activity(), LillyBus.Ui {
                 }
             }
         }.start()
+    }
+
+    private fun headphoneSetup() {
+        val codes = listOf("ask", "music", "off")
+        val labels = arrayOf(
+            "Ask me — Lilly says \"Headphones connected, what can I do?\" and listens",
+            "Play my music automatically",
+            "Off — do nothing"
+        )
+        val cur = when {
+            !prefs.getBoolean("headphone_mode", true) -> 2
+            prefs.getBoolean("headphone_music", false) -> 1
+            else -> 0
+        }
+        AlertDialog.Builder(this).setTitle("🎧 When earphones / Bluetooth connect")
+            .setSingleChoiceItems(labels, cur) { d, w ->
+                prefs.edit().putBoolean("headphone_mode", codes[w] != "off").putBoolean("headphone_music", codes[w] == "music").apply()
+                refreshCards(); d.dismiss()
+            }.show()
+    }
+
+    private fun replyHelp() {
+        val ready = MediaCtl.allowed(this) && prefs.getBoolean("read_notifs", false)
+        AlertDialog.Builder(this).setTitle("💬 Reply without opening WhatsApp")
+            .setMessage(
+                (if (ready) "Ready ✓\n\n" else "") +
+                    "When a message arrives:\n• \"Lilly, Rahul ka message padho\" / \"kiska message aaya?\"\n" +
+                    "• then \"reply karo ki 5 minute mein aata hoon\" → Lilly reads it back → say \"haan\" → sent, WhatsApp never opens\n" +
+                    "• Or straight away: \"Ankit ko reply karo ki ok\"\n\n" +
+                    "Works for WhatsApp, Telegram, Instagram and SMS apps that show a Reply button in the notification. No Lilly helper needed, so payments are fine.\n\n" +
+                    "Needs: 🎛 Music control ON + 🔔 Read my notifications ON. Messages stay only in memory."
+            )
+            .setPositiveButton(if (ready) "OK" else "Turn on") { _, _ ->
+                if (!ready) {
+                    prefs.edit().putBoolean("read_notifs", true).apply()
+                    refreshCards()
+                    if (!MediaCtl.allowed(this)) mediaCtlSetup()
+                }
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun mediaCtlSetup() {

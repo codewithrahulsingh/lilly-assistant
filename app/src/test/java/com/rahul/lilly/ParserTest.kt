@@ -878,3 +878,17 @@ class MusicControlTest {
         org.junit.Assert.assertTrue(Parser.parse("dobara call karo rahul ko") !is CallLogCmd)
     }
 }
+
+class ReplySleepTest {
+    @org.junit.Test fun parse() {
+        val eq = { a: Any, b: Any -> org.junit.Assert.assertEquals(a, b) }
+        eq(ReplyCmd("rahul", "5 minute me aata hoon"), Parser.parse("rahul ko reply karo ki 5 minute me aata hoon"))
+        eq(ReplyCmd("", "ok"), Parser.parse("reply karo ki ok"))
+        eq(ReplyCmd("ankit", "on my way"), Parser.parse("reply to ankit saying on my way"))
+        eq(NotificationsCmd("", "rahul"), Parser.parse("rahul ka message padho"))
+        eq(MusicCmd("sleep", "1800"), Parser.parse("30 minute baad gaana band karo"))
+        eq(MusicCmd("sleep_cancel"), Parser.parse("sleep timer band karo"))
+        org.junit.Assert.assertTrue(Parser.parse("10 minute baad yaad dilana ki chai") is Cmd.Alarm)
+        eq(Cmd.Timer(300), Parser.parse("5 minute ka timer lagao"))
+    }
+}

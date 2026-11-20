@@ -10,8 +10,87 @@ import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 
-/** Sirf "Music control" permission ke liye (Android chalte gaane ka control isi se deta hai). Kuch padhta/save nahi karta. */
-class MediaListener : NotificationListenerService()
+/**
+ * "Music control" permission (Android me Notification access). Gaane ka control isi se.
+ * "Read my notifications" ON ho tabhi naye messages RAM me rakhta hai (save/bheja kuch nahi).
+ */
+class MediaListener : NotificationListenerService() {
+    override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification?) {
+        if (sbn != null) Inbox.add(this, sbn)
+    }
+}
+
+/** Naye messages (sirf RAM me) + unka "Reply" button — WhatsApp ko bina khole jawab */
+object Inbox {
+    data class Msg(
+        val app: String, val pkg: String, val title: String, val text: String, val at: Long,
+        val reply: android.app.Notification.Action?
+    )
+
+    private val list = ArrayList<Msg>()
+
+    fun add(ctx: Context, sbn: android.service.notification.StatusBarNotification) {
+        if (!ctx.getSharedPreferences("lilly", Context.MODE_PRIVATE).getBoolean("read_notifs", false)) return
+        val pkg = sbn.packageName ?: return
+        if (pkg == ctx.packageName || pkg == "android" || pkg.startsWith("com.android.systemui")) return
+        val n = sbn.notification ?: return
+        if (n.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0) return
+        if (n.flags and android.app.Notification.FLAG_GROUP_SUMMARY != 0) return
+        if (n.category in setOf(android.app.Notification.CATEGORY_TRANSPORT, android.app.Notification.CATEGORY_PROGRESS,
+                android.app.Notification.CATEGORY_SERVICE, android.app.Notification.CATEGORY_SYSTEM)) return
+        val ex = n.extras ?: return
+        var title = ex.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+        var text = (ex.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT) ?: ex.getCharSequence(android.app.Notification.EXTRA_TEXT))
+            ?.toString()?.trim() ?: ""
+        // Chat wale notification me aakhri message
+        (ex.getParcelableArray(android.app.Notification.EXTRA_MESSAGES))?.lastOrNull()?.let { b ->
+            (b as? Bundle)?.getCharSequence("text")?.toString()?.let { if (it.isNotBlank()) text = it }
+        }
+        title = title.replace(Regex("""\s*\(\d+ (?:messages|new messages|संदेश)\)$"""), "").trim()
+        if (title.isBlank() && text.isBlank()) return
+        if (Regex("""^\d+ new messages?$|^\d+ messages? from \d+ chats?$""", RegexOption.IGNORE_CASE).matches(text)) return
+        val reply = (n.actions ?: emptyArray()).firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+            ?: android.app.Notification.WearableExtender(n).actions.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+        val app = try {
+            ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
+        } catch (e: Exception) { pkg }
+        synchronized(list) {
+            list.removeAll { it.pkg == pkg && it.title == title && it.text == text }
+            list.add(Msg(app, pkg, title, text.take(300), System.currentTimeMillis(), reply))
+            while (list.size > 40) list.removeAt(0)
+        }
+    }
+
+    fun recent(app: String, sinceMs: Long): List<Msg> = synchronized(list) {
+        val now = System.currentTimeMillis()
+        list.filter { now - it.at <= sinceMs && (app.isBlank() || it.pkg.contains(app) || it.app.lowercase().contains(app)) }.reversed()
+    }
+
+    fun clear(app: String) = synchronized(list) {
+        list.removeAll { app.isBlank() || it.pkg.contains(app) || it.app.lowercase().contains(app) }
+    }
+
+    /** Jiska message aaya (naam se, ya sabse naya) aur jiska Reply ho sakta hai */
+    fun findReply(who: String): Msg? = synchronized(list) {
+        val withReply = list.filter { it.reply != null }.reversed()
+        if (who.isBlank()) return@synchronized withReply.firstOrNull()
+        val w = Parser.normName(who)
+        withReply.firstOrNull { Parser.normName(it.title).contains(w) } ?: withReply.firstOrNull { w.split(" ").all { p -> Parser.normName(it.title).contains(p) } }
+    }
+
+    /** Notification ke "Reply" se seedha bhejo (WhatsApp khule bina) */
+    fun send(ctx: Context, m: Msg, text: String): Boolean {
+        val a = m.reply ?: return false
+        return try {
+            val intent = android.content.Intent()
+            val b = Bundle()
+            for (ri in a.remoteInputs) b.putCharSequence(ri.resultKey, text)
+            android.app.RemoteInput.addResultsToIntent(a.remoteInputs, intent, b)
+            a.actionIntent.send(ctx, 0, intent)
+            true
+        } catch (e: Exception) { false }
+    }
+}
 
 /**
  * Kisi bhi music app (Spotify, YouTube Music, JioSaavn, Wynk…) ka chalta gaana control karo —

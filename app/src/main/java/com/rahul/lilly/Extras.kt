@@ -15,10 +15,43 @@ data class CalendarCmd(val op: String, val day: String, val title: String = "", 
  */
 data class MusicCmd(val action: String, val arg: String = "") : Cmd()
 
+/** Aaye hue message ka jawab (notification se, WhatsApp khole bina). who = "" -> sabse naya */
+data class ReplyCmd(val who: String, val text: String) : Cmd()
+
 /** Ek saath do kaam: "torch jalao aur volume badhao" */
 object Extras {
 
-    fun parse(t: String): Cmd? = music(t) ?: sms(t) ?: callLog(t) ?: list(t) ?: calendar(t)
+    fun parse(t: String): Cmd? = reply(t) ?: music(t) ?: sms(t) ?: callLog(t) ?: list(t) ?: calendar(t)
+
+    // ---------------- Reply ----------------
+
+    private fun reply(t: String): Cmd? {
+        val RW = """(?:reply|replay|jawab|jawaab|javab)"""
+        Regex("""^(?:(.+?)\s+ko\s+)?$RW\s+(?:karo|kar do|kardo|bhejo|bhej do|do|de do|send karo)?\s*(?:ki|that|saying|bolo)\s+(.+)$""").find(t)?.let {
+            return ReplyCmd(it.groupValues[1].trim(), it.groupValues[2].trim())
+        }
+        Regex("""^(?:(.+?)\s+ko\s+)?$RW\s+(?:karo|kar do|bhejo|do)\s+(.+)$""").find(t)?.let {
+            return ReplyCmd(it.groupValues[1].trim(), it.groupValues[2].trim())
+        }
+        Regex("""^$RW\s+(?:to\s+)?(\S+(?:\s\S+)?)\s+(?:saying|that|with)\s+(.+)$""").find(t)?.let {
+            return ReplyCmd(it.groupValues[1].trim(), it.groupValues[2].trim())
+        }
+        Regex("""^$RW\s+(?:saying|that|with)\s+(.+)$""").find(t)?.let { return ReplyCmd("", it.groupValues[1].trim()) }
+        // Sirf "reply karo" / "Rahul ko reply karo" — message baad me poochenge
+        Regex("""^(?:(.+?)\s+ko\s+)?$RW\s*(?:karo|kar do|bhejo|do)?$""").find(t)?.let { return ReplyCmd(it.groupValues[1].trim(), "") }
+        return null
+    }
+
+    /** "30 minute baad gaana band karo" / "sleep timer 1 ghanta" -> MusicCmd("sleep", sekund) */
+    fun sleep(t: String): Cmd? {
+        if (Regex("""\bsleep timer\b""").containsMatchIn(t) && Regex("""\b(band|cancel|off|hatao|stop)\b""").containsMatchIn(t) && TimeParse.durationSeconds(t) == null)
+            return MusicCmd("sleep_cancel")
+        val musicStop = Regex("""\b(?:gaana|gana|gaane|music|song|songs|spotify)\b.*\b(?:band|bandh|stop|off|rok)\b|\b(?:stop|pause)\s+(?:the\s+)?(?:music|song)s?\b""").containsMatchIn(t)
+        val later = Regex("""\b(?:baad|bad|me|mein|in|after)\b""").containsMatchIn(t)
+        if (!Regex("""\bsleep timer\b""").containsMatchIn(t) && !(musicStop && later)) return null
+        val sec = TimeParse.durationSeconds(t) ?: return null
+        return MusicCmd("sleep", sec.toString())
+    }
 
     // ---------------- Gaane ka control ----------------
 
