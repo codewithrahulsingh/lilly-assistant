@@ -128,6 +128,7 @@ class LillyBrain(private val ctx: Context) {
         answerPendingCall(heard)?.let { return it }
         answerPendingAlarm(heard)?.let { return it }
         answerPendingReply(heard)?.let { return it }
+        answerPick(heard)?.let { return it }
         answerAfterRead(heard)?.let { return it }
         // Google ke kisi bhi andaze me gaali ho toh pakdo
         abuseReply(heard.firstOrNull { Abuse.has(Parser.normalize(it)) || Abuse.toggle(Parser.normalize(it)) != null } ?: heard.first())?.let { return it }
@@ -340,44 +341,110 @@ class LillyBrain(private val ctx: Context) {
             "To read your messages, turn on “Read my notifications” in the Lilly app",
             "मैसेज पढ़ने के लिए लिली ऐप में रीड माय नोटिफिकेशन्स ऑन कीजिए", endChat = true
         )
-        var list = Inbox.recent(app, 12 * 60 * 60 * 1000L)
+        val list = Inbox.recent(app, 12 * 60 * 60 * 1000L)
         if (who.isNotBlank()) {
             val w = Parser.normName(who)
-            list = list.filter { Parser.normName(it.title).contains(w) }
-            if (list.isEmpty()) return Reply("No new message from $who", "${CallChoice.speakName(who)} का कोई नया मैसेज नहीं है", endChat = true)
+            val mine = list.filter { Parser.normName(it.title).contains(w) }
+            if (mine.isEmpty()) return Reply("No new message from $who", "${CallChoice.speakName(who)} का कोई नया मैसेज नहीं है", endChat = true)
+            return readSender(mine)
         }
         if (list.isEmpty()) return Reply(
             if (app.isBlank()) "No new messages" else "No new WhatsApp messages",
             if (app.isBlank()) "कोई नया मैसेज नहीं है" else "व्हाट्सऐप पर कोई नया मैसेज नहीं है", endChat = true
         )
-        val top = list.take(5)
-        val lines = top.joinToString("\n") { "• ${it.app}: ${it.title}${if (it.text.isNotBlank()) " — " + it.text else ""}" }
-        fun say(n: Inbox.Msg, hi: Boolean): String {
-            val w = CallChoice.speakName(n.title)
-            val body = n.text.take(160)
-            return if (hi) "$w: $body" else "$w says: $body"
+        // Bhejne walon ke hisaab se (sabse naya pehle)
+        val groups = list.groupBy { it.pkg + "|" + it.title }.values.toList().take(8)
+        if (groups.size == 1) return readSender(groups[0])
+        pickFrom = PickFrom(groups, System.currentTimeMillis())
+        fun label(g: List<Inbox.Msg>, hi: Boolean): String {
+            val m = g.first()
+            val w = if (hi) CallChoice.speakName(m.title) else m.title
+            return when {
+                isCallNote(m) -> if (hi) "$w की मिस्ड कॉल" else "missed call from $w"
+                m.pkg.contains("whatsapp") -> w
+                else -> if (hi) "$w (${m.app})" else "$w (${m.app})"
+            }
         }
-        val first = top.first()
-        lastReadFrom = first.title
-        val missed = isCallNote(first)
-        val canReply = first.reply != null
-        val canCall = missed || first.title.isNotBlank()
-        // Padhne ke baad poochho: jawab dena hai ya call karun? (Siri jaisa)
-        val askEn: String
-        val askHi: String
-        val w = CallChoice.speakName(first.title)
-        when {
-            missed -> { askEn = "Should I call ${first.title} back?"; askHi = "$w को वापस कॉल करूँ?" }
-            canReply -> { askEn = "Reply to ${first.title}, or call?"; askHi = "$w को जवाब देना है या कॉल करूँ?" }
-            canCall -> { askEn = "Should I call ${first.title}?"; askHi = "$w को कॉल करूँ?" }
-            else -> { askEn = ""; askHi = "" }
-        }
-        if (askEn.isNotBlank()) afterRead = AfterRead(first, System.currentTimeMillis())
+        val namesEn = groups.joinToString(", ") { label(it, false) }
+        val namesHi = groups.joinToString(", ") { label(it, true) }
         return Reply(
-            "${list.size} new:\n$lines" + if (askEn.isNotBlank()) "\n\n$askEn" else "",
-            top.joinToString("। ") { say(it, true) } + if (askHi.isNotBlank()) "। $askHi" else "",
+            "${groups.size} people:\n" + groups.mapIndexed { i, g -> "${i + 1}. ${label(g, false)}" + if (g.size > 1) " (${g.size})" else "" }.joinToString("\n") +
+                "\n\nWhose should I read? (say a name, \"first\", or \"all\")",
+            "${groups.size} लोगों के मैसेज हैं: $namesHi। किसका पढ़ूँ?",
+            endChat = false,
+            spokenEn = "Messages from $namesEn. Whose should I read?"
+        )
+    }
+
+    private data class PickFrom(val groups: List<List<Inbox.Msg>>, val at: Long)
+    private var pickFrom: PickFrom? = null
+
+    /** "Kiska padhun?" ka jawab: naam / pehla / doosra / sab */
+    private fun answerPick(heard: List<String>): Reply? {
+        val p = pickFrom ?: return null
+        pickFrom = null
+        if (System.currentTimeMillis() - p.at > 60_000) return null
+        val n = Parser.normalize(heard.first())
+        if (Regex("""^(?:no|nahi|nahin|na|rehne do|chhodo|kisi ka nahi|koi nahi|cancel|baad me)$""").matches(n)) return Reply("Okay", "ठीक है", endChat = true)
+        if (Regex("""\b(?:sab|sabka|sabke|saare|all|everyone|sabhi)\b""").containsMatchIn(n)) {
+            val all = p.groups.flatMap { it.take(2) }
+            val first = p.groups.first()
+            val en = p.groups.joinToString(". ") { g -> "${g.first().title}: " + g.take(2).reversed().joinToString(", ") { it.text.take(120) } }
+            val hi = p.groups.joinToString("। ") { g -> "${CallChoice.speakName(g.first().title)}: " + g.take(2).reversed().joinToString(", ") { it.text.take(120) } }
+            val ask = askAfter(first.first())
+            return Reply(all.joinToString("\n") { "• ${it.title}: ${it.text}" } + "\n\n" + ask.first, "$hi। ${ask.second}", endChat = ask.first.isBlank(), spokenEn = "$en. ${ask.first}")
+        }
+        val ord = when {
+            Regex("""\b(?:pehla|pahla|pehle|first|ek|1|one)\b""").containsMatchIn(n) -> 0
+            Regex("""\b(?:doosra|dusra|second|do|2|two)\b""").containsMatchIn(n) -> 1
+            Regex("""\b(?:teesra|tisra|third|teen|3|three)\b""").containsMatchIn(n) -> 2
+            Regex("""\b(?:chautha|fourth|char|4)\b""").containsMatchIn(n) -> 3
+            Regex("""\b(?:last|aakhri|akhri)\b""").containsMatchIn(n) -> p.groups.size - 1
+            else -> -1
+        }
+        val g = if (ord in p.groups.indices) p.groups[ord]
+        else {
+            val words = n.replace(Regex("""\b(?:ka|ki|ke|wala|vala|message|msg|padho|batao|sunao|read)\b"""), " ").trim()
+            val w = Parser.normName(words)
+            if (w.isBlank()) null
+            else p.groups.firstOrNull { Parser.normName(it.first().title).contains(w) }
+                ?: p.groups.firstOrNull { gr -> w.split(" ").any { part -> part.length >= 3 && Parser.normName(gr.first().title).contains(part) } }
+        }
+        if (g == null) {
+            pickFrom = p.copy(at = System.currentTimeMillis())
+            return Reply("Whose? Say the name or \"first\"", "किसका? नाम बोलिए या पहला", endChat = false)
+        }
+        return readSender(g)
+    }
+
+    /** Padhne ke baad kya poochhna hai: (English, Hindi) */
+    private fun askAfter(m: Inbox.Msg): Pair<String, String> {
+        val w = CallChoice.speakName(m.title)
+        val r = when {
+            isCallNote(m) -> "Should I call ${m.title} back?" to "$w को वापस कॉल करूँ?"
+            m.reply != null -> "Should I reply, or leave it?" to "रिप्लाई करना है या रहने दूँ?"
+            m.title.isNotBlank() -> "Should I call ${m.title}?" to "$w को कॉल करूँ?"
+            else -> "" to ""
+        }
+        if (r.first.isNotBlank()) afterRead = AfterRead(m, System.currentTimeMillis())
+        lastReadFrom = m.title
+        return r
+    }
+
+    /** Ek insaan ke saare naye message padho, phir poochho reply / call */
+    private fun readSender(g: List<Inbox.Msg>): Reply {
+        val m = g.first()
+        val w = CallChoice.speakName(m.title)
+        val texts = g.take(4).reversed().map { it.text.take(200) }.filter { it.isNotBlank() }
+        val (askEn, askHi) = askAfter(m)
+        val bodyHi = if (isCallNote(m)) "$w की मिस्ड कॉल" else "$w ने लिखा: " + texts.joinToString("। ")
+        val bodyEn = if (isCallNote(m)) "Missed call from ${m.title}" else "${m.title} says: " + texts.joinToString(". ")
+        return Reply(
+            (if (isCallNote(m)) "📞 Missed call from ${m.title}" else "💬 ${m.title} (${m.app}):\n" + texts.joinToString("\n") { "• $it" }) +
+                if (askEn.isNotBlank()) "\n\n$askEn" else "",
+            bodyHi + if (askHi.isNotBlank()) "। $askHi" else "",
             endChat = askEn.isBlank(),
-            spokenEn = top.joinToString(". ") { say(it, false) } + if (askEn.isNotBlank()) ". $askEn" else ""
+            spokenEn = bodyEn + if (askEn.isNotBlank()) ". $askEn" else ""
         )
     }
 
@@ -391,47 +458,49 @@ class LillyBrain(private val ctx: Context) {
         Regex("""dialer|incallui|telecom|\.phone|contacts""").containsMatchIn(m.pkg) ||
             Regex("""(?i)missed call|मिस्ड कॉल""").containsMatchIn(m.text + " " + m.title)
 
-    /** Message padhne ke baad: "haan / reply" -> kya bhejun; "call" -> call; "nahi" -> band */
+    /**
+     * Message padhne ke baad ("reply karna hai ya rehne doon?"):
+     * "nahi / rehne do" -> band; "call karo" -> call; "haan / reply karo" -> kya bhejun?;
+     * "reply karo ki …" ya kuch bhi aur bola -> wahi message seedha bhej do.
+     */
     private fun answerAfterRead(heard: List<String>): Reply? {
         val a = afterRead ?: return null
         afterRead = null
-        if (System.currentTimeMillis() - a.at > 45_000) return null
-        val n = Parser.normalize(heard.first())
+        if (System.currentTimeMillis() - a.at > 60_000) return null
+        val raw = Parser.stripWakeWord(heard.first())
+        val n = Parser.normalize(raw)
         val m = a.msg
         val who = CallChoice.speakName(m.title)
         val missed = isCallNote(m)
-        val no = Regex("""^(?:no|nope|nahi|nahin|na|nai|mat|cancel|rehne do|chhodo|chodo|baad me|baad mein|band karo|kuch nahi|not now)$""").matches(n)
-        if (no) return Reply("Okay", "ठीक है", endChat = true)
-        val wantsCall = Regex("""\b(?:call|phone|ghanti|dial|baat karao|baat karni)\b""").containsMatchIn(n)
-        val video = Regex("""\bvideo\b""").containsMatchIn(n)
-        val wa = Regex("""\b(?:whatsapp|whatsap|watsapp)\b""").containsMatchIn(n) || (m.pkg.contains("whatsapp") && Regex("""\bwhatsapp\b""").containsMatchIn(n))
-        val isYes = yesRe.matches(n) || Regex("""^(?:haan|han|ha|haa|yes|ji|ok|okay|theek hai|sure)\b""").containsMatchIn(n)
-        val wantsReply = Regex("""\b(?:reply|replay|jawab|javab|message|msg|likho|bhejo|bolo)\b""").containsMatchIn(n)
-        val target = m.title.replace(Regex("""^.*?:\s*"""), "").trim().ifBlank { m.title } // "Family: Rahul" -> Rahul
-        // Call: missed call par "haan" = call back; ya "call karo"
+        if (Regex("""^(?:no|nope|nahi|nahin|na|nai|mat|cancel|rehne do|rahne do|rehne de|chhodo|chodo|chhod do|baad me|baad mein|band karo|kuch nahi|not now|leave it|ignore)(?: karo| do| yaar| please)?$""").matches(n))
+            return Reply("Okay", "ठीक है", endChat = true)
+        val wantsCall = Regex("""\b(?:call|phone|ghanti|dial)\b""").containsMatchIn(n) && !Regex("""\b(?:reply|jawab|ki)\b""").containsMatchIn(n)
+        val isYes = Regex("""^(?:haan|han|ha|haa|haan ji|ji|ji haan|yes|yeah|ok|okay|theek hai|thik hai|sure|kar do|karo)$""").matches(n)
+        val target = m.title.replace(Regex("""^.*?:\s*"""), "").trim().ifBlank { m.title }
         if (wantsCall || (missed && isYes)) {
+            val video = Regex("""\bvideo\b""").containsMatchIn(n)
+            val wa = Regex("""\bwhatsapp\b""").containsMatchIn(n)
             val digits = target.filter { it.isDigit() }
-            if (digits.length >= 7 && target.count { it.isLetter() } == 0)
+            if (digits.length >= 7 && target.none { it.isLetter() })
                 return callNumber(target, CallChoice.Phone(target, digits, "", false), speaker = false, chosen = true)
             return if (wa || video) callReply(listOf(target), false, action = if (video) "wa_video" else "wa_call")
             else callReply(listOf(target), false)
         }
-        if ((isYes || wantsReply) && m.reply != null) {
-            // "haan, bol do ki aa raha hoon" — usi saans me message bhi ho toh seedha bhejo
-            val inline = Regex("""\b(?:ki|that|bolo|likho)\s+(.+)$""").find(n)?.groupValues?.get(1)
-            if (inline != null && inline.split(" ").size >= 2) {
-                val text = messageText(inline)
-                return if (Inbox.send(ctx, m, text)) Reply("Sent to ${m.title}: “$text” ✓", "$who को भेज दिया: $text", endChat = true)
-                else Reply("Couldn't send from here", "यहाँ से नहीं भेज पाई", endChat = true, failed = true)
-            }
+        if (missed) return null
+        // Sirf "haan" / "reply karo" — message abhi bola nahi
+        if (isYes || Regex("""^(?:reply|replay|jawab|javab)(?:\s+(?:karo|kar do|kardo|do|de do|bhejo|dena hai|karna hai))?$|^haan\s+(?:reply|jawab)\s*(?:karo|do)?$""").matches(n)) {
+            if (m.reply == null) return decideInner(listOf("$target ko whatsapp message bhejo"), false)
             pendingReply = PendingReply(m, "", System.currentTimeMillis(), direct = true)
             return Reply("What should I send to ${m.title}?", "$who को क्या भेजूँ? बोलिए", endChat = false)
         }
-        if (isYes && m.reply == null) {
-            // Reply button nahi (jaise Instagram) — WhatsApp/SMS se chat kholo
-            return decideInner(listOf("$target ko message bhejo"), false)
-        }
-        return null // kuch aur bola — normal command ki tarah samjho
+        // "reply karo ki …" / "bol do ki …" / ya seedha message — jo bola wahi bhejo
+        val inline = Regex("""(?i)\b(?:reply|replay|jawab|javab|bol do|bolo|likho|likh do|keh do)\b.*?\b(?:ki|that|कि)\s+(.+)$""").find(raw)?.groupValues?.get(1)
+        val body = inline?.trim() ?: raw.replace(Regex("""^(?i)\s*(?:haan|han|ha|ok|okay)?[\s,]*(?:(?:reply|replay|jawab|javab|message)\s+(?:karo|kar do|kardo|do|de do|bhejo|bhej do)?\s*)?(?:ki|that|bolo|bol do|likho|likh do|keh do|कि)?\s*"""), "").trim()
+            .ifBlank { raw.trim() }
+        val text = messageText(body)
+        if (m.reply != null && Inbox.send(ctx, m, text))
+            return Reply("Sent to ${m.title}: “$text” ✓", "$who को भेज दिया: $text", endChat = true)
+        return decideInner(listOf("whatsapp $target ko message bhejo ki $body"), false)
     }
 
     private data class PendingReply(val msg: Inbox.Msg, var text: String, var at: Long, val direct: Boolean = false)
