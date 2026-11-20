@@ -16,7 +16,17 @@ object AiChat {
 
     /** command != null: AI ne baat ko phone ki command samjha (jaise "call rohit") */
     /** memory != null: user ne apne baare me koi pakki baat batayi, use yaad rakhna hai */
-    data class Answer(val spoken: String, val display: String, val command: String? = null, val memory: String? = null)
+    data class Answer(
+        val spoken: String, val display: String, val command: String? = null, val memory: String? = null,
+        /** Speech recognition ki galat spelling -> sahi (Lilly seekh ke aage khud sudharti hai) */
+        val fixes: Map<String, String> = emptyMap()
+    )
+
+    private const val FIX_RULE =
+        " The user's message comes from phone speech recognition, which often mis-spells Hinglish/English words " +
+            "(e.g. 'misi call' = 'missed call', 'chek' = 'check', 'vi fi' = 'WiFi', 'notifikeshan' = 'notifications'). " +
+            "Understand what they meant. If you see such clear speech-recognition mistakes, add one extra final line exactly like: " +
+            "FIX: wrong words=right words; other wrong=other right (lowercase, max 5, only obvious mis-hearings, never names or slang)."
 
     private const val MEMORY_RULE =
         " If the user tells you a lasting personal fact about themselves or people in their life " +
@@ -32,7 +42,7 @@ object AiChat {
         val base = if (male) SYSTEM.replace(FEMALE_LINE, MALE_LINE).replace("with a warm, friendly female voice", "with a warm, friendly male voice") else SYSTEM
         val rough = if (Abuse.roughAnswer) "\n\nRahul has turned on roast mode and is talking rough: answer the question correctly, " +
             "but in a cheeky, rough Mumbai-tapori Hinglish style, playfully roasting him (slang like abe, saale, bhai is fine). Keep it short." else ""
-        return base + MEMORY_RULE + known + rough
+        return base + MEMORY_RULE + FIX_RULE + known + rough
     }
 
     /** Rahul ne ladke ki awaaz chuni ho toh AI bhi ladke ki tarah bole */
@@ -154,6 +164,18 @@ object AiChat {
             key.startsWith("sk-ant-") -> anthropic(key, history, question, system)
             else -> gemini(key, history, question, system)
         }
+        // "FIX: misi call=missed call; chek=check" — galat sune shabd, seekhne ke liye
+        val fixes = LinkedHashMap<String, String>()
+        Regex("""(?:\|\|\|)?\s*FIX\s*:\s*(.+)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).find(raw)?.let { m ->
+            for (pair in m.groupValues[1].split(';')) {
+                val kv = pair.split('=')
+                if (kv.size != 2) continue
+                val w = kv[0].trim().trim('"', '\'', '`').lowercase()
+                val rgt = kv[1].trim().trim('"', '\'', '`', '.').lowercase()
+                if (w.isNotBlank() && rgt.isNotBlank() && w != rgt) fixes[w] = rgt
+            }
+            raw = raw.substring(0, m.range.first) + raw.substring(m.range.last + 1)
+        }
         // "|||MEM: Rahul's gym is at 6 pm" — yaad rakhne wali baat alag nikaalo
         var memory: String? = null
         Regex("""(?:\|\|\|)?\s*MEM\s*:\s*(.+)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)).find(raw)?.let { m ->
@@ -163,13 +185,13 @@ object AiChat {
         // "CMD: call rohit" — phone ka kaam
         Regex("""(?:^|\|\|\||\n)\s*\**CMD\**\s*:\s*(.+)""", RegexOption.IGNORE_CASE).find(raw.trim())?.let { m ->
             val cmd = m.groupValues[1].lines().first().trim().trim('"', '\'', '.', '`').trim()
-            if (cmd.isNotBlank()) return Answer("", "", command = cmd)
+            if (cmd.isNotBlank()) return Answer("", "", command = cmd, fixes = fixes)
         }
         val parts = raw.trim().split("|||")
         val spoken = parts[0].trim()
         val display = (parts.getOrNull(1)?.trim()).takeUnless { it.isNullOrBlank() } ?: Parser.roman(spoken)
         if (spoken.isBlank()) throw IllegalStateException("khali jawab")
-        return Answer(spoken, display, memory = memory)
+        return Answer(spoken, display, memory = memory, fixes = fixes)
     }
 
     /** body == null toh GET */

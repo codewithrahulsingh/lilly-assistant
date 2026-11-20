@@ -117,6 +117,7 @@ class LillyBrain(private val ctx: Context) {
 
     fun handle(rawText: String, alternatives: List<String>, allowAi: Boolean = true): Reply {
         learner.reload() // app ki screen se kuch bhulaya gaya ho toh
+        Parser.setCustomSpellings(SpellBook.load(prefs.getString("spell_learned", null))) // seekhi hui spellings
         memory.reload()
         // Pehla = sabse pakka; baaki Google ke doosre andaze (galat sune naam pakadne ke liye)
         val heard = (listOf(rawText) + alternatives)

@@ -236,7 +236,7 @@ class MainActivity : Activity(), LillyBus.Ui {
 
         val r13 = row(col)
         abuseValue = card(r13, "🤬", "Gaali mode") { abuseSetup() }
-        card(r13, "🗣", "Spellings") { showSpellings() }.text = "Words Lilly auto-corrects"
+        card(r13, "🗣", "My spellings") { showSpellings() }.text = "Lilly learns & fixes words"
 
         val r14 = row(col)
         musicValue = card(r14, "🎵", "Music app") { chooseMusicApp() }
@@ -1619,16 +1619,51 @@ class MainActivity : Activity(), LillyBus.Ui {
             .setNegativeButton("Close", null).show()
     }
 
+    /** Meri spellings: Lilly ki seekhi hui + apni jodi hui (galat -> sahi) */
     private fun showSpellings() {
-        AlertDialog.Builder(this).setTitle("🗣 Auto-corrected words")
-            .setMessage(
-                "Google sometimes writes words wrong. Lilly fixes them before acting:\n\n" +
-                    "vi-fi, wai fai, वाई-फाई → WiFi\nblue tooth → Bluetooth\nwatsap, vats app → WhatsApp\n" +
-                    "spoti fy → Spotify\nyou tube → YouTube\ninsta gram → Instagram\ntourch → torch\nvolumn → volume\n" +
-                    "alaram → alarm\ncalender → calendar\naeroplane mode → airplane mode\n\n" +
-                    "If Lilly mis-hears some other word, send it to the developer to add here."
-            )
-            .setPositiveButton("OK", null).show()
+        val book = SpellBook.load(prefs.getString("spell_learned", null))
+        val items = book.entries.map { "${it.key}  →  ${it.value}" }.reversed()
+        val b = AlertDialog.Builder(this).setTitle("🗣 My spellings (${book.size})")
+        if (items.isEmpty()) b.setMessage(
+            "Lilly learns these by herself: when Google writes a word wrong and the AI works out what you meant " +
+                "(\"misi call\" → \"missed call\"), she saves it and fixes it next time — even without internet.\n\n" +
+                "You can also add your own. Built-in fixes: vi-fi → WiFi, watsap → WhatsApp, chek → check, misi call → missed call, and more."
+        ) else b.setItems(items.toTypedArray()) { _, w ->
+            val key = book.keys.reversed().toList()[w]
+            AlertDialog.Builder(this).setTitle("Delete \"$key\"?")
+                .setPositiveButton("Delete") { _, _ ->
+                    book.remove(key)
+                    prefs.edit().putString("spell_learned", SpellBook.save(book)).apply()
+                    Parser.setCustomSpellings(book)
+                    showSpellings()
+                }.setNegativeButton("Cancel", null).show()
+        }
+        b.setPositiveButton("Add") { _, _ -> addSpelling() }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun addSpelling() {
+        val wrong = android.widget.EditText(this).apply { hint = "What Lilly writes (wrong), e.g. baidya sar"; setSingleLine() }
+        val right = android.widget.EditText(this).apply { hint = "What you said (right), e.g. badiya sir"; setSingleLine() }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(wrong); addView(right)
+        }
+        AlertDialog.Builder(this).setTitle("Add a spelling").setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val w = wrong.text.toString().trim().lowercase()
+                val r = right.text.toString().trim()
+                if (w.length >= 2 && r.isNotBlank() && !w.equals(r, true)) {
+                    val book = SpellBook.load(prefs.getString("spell_learned", null))
+                    book[w] = r
+                    prefs.edit().putString("spell_learned", SpellBook.save(book)).apply()
+                    Parser.setCustomSpellings(book)
+                    android.widget.Toast.makeText(this, "Saved: $w → $r", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                showSpellings()
+            }
+            .setNegativeButton("Cancel", null).show()
     }
 
     // ---------------- Voice match (sirf meri awaaz) ----------------

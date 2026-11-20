@@ -1200,6 +1200,7 @@ class LillyService : Service() {
                         return@act
                     }
                     val cmd = result.command
+                    if (cmd != null) learnFixes(question, result.fixes)
                     if (cmd != null) {
                         // AI ne samjha ki ye phone ka kaam hai — karo, aur chal gaya toh agli baar ke liye yaad rakho
                         LillyBus.heard("“${brain.roman(question)}” → $cmd")
@@ -1227,6 +1228,8 @@ class LillyService : Service() {
                             "माफ़ कीजिए, समझ नहीं पाई। ऐसे बोलिए: स्पॉटिफाई पर केसरिया चलाओ") { continueChat() }
                         return@act
                     }
+                    // AI ne bataya ki Google ne kaunse shabd galat likhe — yaad rakho, agli baar khud sahi
+                    learnFixes(question, result.fixes)
                     // Baat-cheet me aayi koi pakki baat ("mera birthday 5 March hai") — yaad rakho
                     result.memory?.let { brain.memory.remember(it) }
                     // Pehla sawaal ho (pichhli baat par tika na ho) toh jawab save: agli baar turant
@@ -1239,6 +1242,19 @@ class LillyService : Service() {
                 if (talking) ready = act else act()
             }
         }.start()
+    }
+
+    /** AI ki "FIX: misi call=missed call" — Lilly ki apni spelling training */
+    private fun learnFixes(said: String, fixes: Map<String, String>) {
+        if (fixes.isEmpty()) return
+        val book = SpellBook.load(prefs.getString("spell_learned", null))
+        var added = 0
+        for ((w, r) in fixes) if (SpellBook.acceptable(w, r, said) && book[w] != r) { book[w] = r; added++ }
+        if (added == 0) return
+        while (book.size > 300) book.remove(book.keys.first())
+        prefs.edit().putString("spell_learned", SpellBook.save(book)).apply()
+        Parser.setCustomSpellings(book)
+        LillyBus.heard("Learned: " + fixes.entries.joinToString(", ") { "${it.key} → ${it.value}" })
     }
 
     // ---------------- Headphone / Bluetooth mode ----------------

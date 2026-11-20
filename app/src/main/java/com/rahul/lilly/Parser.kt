@@ -167,7 +167,18 @@ object Parser {
         var s = t
         // Pehle se sahi likha ho ("youtube") toh waisa hi rehne do
         for ((re, to) in spellings) s = re.replace(s) { m -> if (m.value.equals(to, true)) m.value else to }
+        // Rahul ki apni / Lilly ki seekhi hui spellings
+        for ((re, to) in custom) s = re.replace(s, to)
         return s
+    }
+
+    @Volatile private var custom: List<Pair<Regex, String>> = emptyList()
+
+    /** Seekhi hui spellings (galat -> sahi) set karo — SpellBook bulata hai */
+    fun setCustomSpellings(map: Map<String, String>) {
+        custom = map.entries.sortedByDescending { it.key.length }.mapNotNull { (w, r) ->
+            try { Regex("""(?<![\p{L}\p{N}])""" + Regex.escape(w).replace(" ", "\\E\\s+\\Q") + """(?![\p{L}\p{N}])""", RegexOption.IGNORE_CASE) to r } catch (e: Exception) { null }
+        }
     }
 
     private val consonants = mapOf(

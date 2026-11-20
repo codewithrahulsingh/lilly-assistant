@@ -899,3 +899,13 @@ class NotifPhrasesTest {
             org.junit.Assert.assertTrue(t, Parser.parse(t) is NotificationsCmd)
     }
 }
+
+class LearnedSpellingTest {
+    @org.junit.Test fun custom() {
+        Parser.setCustomSpellings(mapOf("baidya sar" to "badiya sir", "noti" to "notifications"))
+        org.junit.Assert.assertEquals("call badiya sir", Parser.roman("call baidya sar"))
+        org.junit.Assert.assertEquals("notifications check karo", Parser.roman("noti check karo"))
+        org.junit.Assert.assertEquals("notice board", Parser.roman("notice board"))
+        Parser.setCustomSpellings(emptyMap())
+    }
+}
