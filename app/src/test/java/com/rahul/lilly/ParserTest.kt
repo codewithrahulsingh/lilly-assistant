@@ -892,3 +892,10 @@ class ReplySleepTest {
         eq(Cmd.Timer(300), Parser.parse("5 minute ka timer lagao"))
     }
 }
+
+class NotifPhrasesTest {
+    @org.junit.Test fun phrases() {
+        for (t in listOf("notifications chek karo", "check my notifications", "notification dekho", "messages check karo", "kisne message kiya"))
+            org.junit.Assert.assertTrue(t, Parser.parse(t) is NotificationsCmd)
+    }
+}

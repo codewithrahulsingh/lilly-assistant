@@ -158,7 +158,9 @@ object Parser {
         """\b(?:reminder|remaindar|riminder|remainder)\b""" to "reminder",
         """\b(?:skrin\s?shot|screen\s?shot)\b""" to "screenshot",
         """\b(?:sailent|silant|sailant)\b""" to "silent",
-        """\b(?:vaibret|vibret|vaibrate)\b""" to "vibrate"
+        """\b(?:vaibret|vibret|vaibrate)\b""" to "vibrate",
+        """\b(?:chek|chk|chak)\b""" to "check",
+        """\b(?:notifcation|notifaction|notificasion|notificaton)s?\b""" to "notifications"
     ).map { Regex(it.first, RegexOption.IGNORE_CASE) to it.second }
 
     fun fixSpelling(t: String): String {

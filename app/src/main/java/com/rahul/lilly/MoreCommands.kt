@@ -203,7 +203,11 @@ object MoreCommands {
             """kiska message|kis ka message|kiske message|koi message aaya|koi naya message|message aaya kya|""" +
                 """read (?:my |the )?(?:notifications|messages)|(?:any|new) (?:new )?messages|who (?:messaged|texted) me|""" +
                 """what are my notifications|notifications? (?:padho|batao|sunao|read)|""" +
-                """(?:my|meri|mere) notifications?|kya notification|kaun sa notification"""
+                """(?:my|meri|mere) notifications?|kya notification|kaun sa notification|""" +
+                """notifications?\s+(?:check|chek|chk|dekho|dekh lo|dikhao|batao|bata do|sunao|kya hai|kya aaye|aaye)|""" +
+                """(?:check|chek|show|any|new|naye|nayi)\s+(?:my\s+)?notifications?|^notifications?$|""" +
+                """(?:messages?|msg|whatsapp)\s+(?:check|chek|dekho|dekh lo|batao)\s*(?:karo|kar do|kardo|lo)?$|""" +
+                """naye messages?|nayi messages?|koi naya msg|unread messages?|kisne message kiya|kisne msg kiya"""
         ).containsMatchIn(t)
         if (!hit) return null
         return NotificationsCmd(if (Regex("""\b$WA\b""").containsMatchIn(t)) "whatsapp" else "")
