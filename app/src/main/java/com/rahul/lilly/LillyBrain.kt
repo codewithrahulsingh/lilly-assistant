@@ -1331,7 +1331,38 @@ class LillyBrain(private val ctx: Context) {
     private val ordinalEn = listOf("first", "second", "third", "fourth", "fifth")
 
     /** Siri jaisa: screen par list, aur bol kar poochho */
+    /** Siri jaisa card upar dikhao (overlay permission ho toh); true = dikh gaya */
+    private fun showChoiceCard(pc: PendingCall): Boolean {
+        if (!Settings.canDrawOverlays(ctx)) return false
+        val o = pc.options
+        val who = if (pc.byName) pc.target.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } } else o.first().name
+        val verb = when (pc.action) { "wa_msg" -> "WhatsApp"; "wa_call" -> "WhatsApp call"; "wa_video" -> "Video call"; "wa_sms" -> "Message"; else -> "Call" }
+        fun sub(p: CallChoice.Phone) = listOf(p.label.replaceFirstChar { it.uppercase() }, "••" + CallChoice.lastDigits(p.number))
+            .filter { it.isNotBlank() && it != "••" }.joinToString(" · ")
+        val sheet = if (pc.byName) {
+            val from = if (o.size <= 3) 0 else pc.page * PAGE
+            val page = if (o.size <= 3) o else o.subList(from, minOf(from + PAGE, o.size))
+            val left = o.size - (from + page.size)
+            val pages = (o.size + PAGE - 1) / PAGE
+            ChoiceSheet(pc.action.ifBlank { "call" }, "$verb $who",
+                "${o.size} contacts" + (if (o.size > 3 && pages > 1) " · page ${pc.page + 1} of $pages" else "") + " · say a number or tap",
+                page.mapIndexed { i, p -> ChoiceItem(from + i + 1, p.name, sub(p), p.starred) }, left)
+        } else {
+            ChoiceSheet(pc.action.ifBlank { "call" }, "$verb $who", "${o.size} numbers · which one?",
+                o.mapIndexed { i, p -> ChoiceItem(i + 1, p.label.ifBlank { "Number ${i + 1}" }.replaceFirstChar { it.uppercase() }, "••" + CallChoice.lastDigits(p.number), p.starred) }, 0)
+        }
+        ChoicePopup.show(ctx, sheet)
+        return true
+    }
+
     private fun askChoice(pc: PendingCall): Reply {
+        val card = showChoiceCard(pc)
+        val r = askChoiceText(pc)
+        // Card dikh raha hai toh neeche lambi list dobara mat likho — bolna wahi
+        return if (card) r.copy(display = r.display.lines().first() + "\nSay a number, or tap one above.") else r
+    }
+
+    private fun askChoiceText(pc: PendingCall): Reply {
         val o = pc.options
         if (pc.byName) {
             val who = CallChoice.speakName(pc.target).replaceFirstChar { it.uppercase() }

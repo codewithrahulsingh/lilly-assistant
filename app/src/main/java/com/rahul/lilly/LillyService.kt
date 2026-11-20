@@ -285,6 +285,8 @@ class LillyService : Service() {
             started = true
             brain = LillyBrain(this)
             LillyAccess.app = applicationContext
+            // Card par tap = jaise wahi bola
+            ChoicePopup.onPick = { said -> handler.post { tapAnswer(said) } }
             watchHeadphones()
             english = prefs.getBoolean("reply_en", false)
             restoreMutedStreams()
@@ -1087,7 +1089,29 @@ class LillyService : Service() {
         try { nm.notify(liveId, n) } catch (e: Exception) { }
     }
 
+    /** Choice card par tap: sunna roko aur wahi jawab chalao */
+    private fun tapAnswer(said: String) {
+        if (mode == Mode.STOPPED) return
+        SmartEar.stop()
+        try { recognizer?.cancel() } catch (e: Exception) { }
+        handler.removeCallbacks(wakeRunnable)
+        if (said == "cancel") {
+            brain.cancelChoice()
+            ChoicePopup.hide()
+            sayBi("Okay", "ठीक है") { endSession(); listen(Mode.WAKE) }
+            return
+        }
+        mode = Mode.COMMAND
+        LillyBus.ui?.keepAlive()
+        followUp = false
+        // Bhasha wahi rakho jo pehle boli thi (tap "3" ko English na samjho)
+        val reply = brain.handle(said, listOf(said))
+        val q = reply.askAi
+        if (q != null) askAi(q) else deliver(reply)
+    }
+
     private fun endSession() {
+        ChoicePopup.hide()
         getSystemService(NotificationManager::class.java).cancel(liveId)
         LillyBus.endSession()
         floating?.hideSoon()
@@ -1138,6 +1162,7 @@ class LillyService : Service() {
 
     /** Jawab bolo, phir kaam karo (call, app, gaana…) */
     private fun deliver(reply: LillyBrain.Reply) {
+        if (!brain.awaitingChoice()) ChoicePopup.hide()
         // Internet wala kaam (mausam, good morning…): "Ek second" bolo, background me karo, phir jawab
         reply.later?.let { work -> deliverLater(reply, work); return }
         val then = {
