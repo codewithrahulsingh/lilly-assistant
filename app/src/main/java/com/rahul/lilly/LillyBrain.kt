@@ -87,6 +87,18 @@ class LillyBrain(private val ctx: Context) {
 
     fun cancelChoice() { pendingCall = null; waAskText = null; waConfirm = null }
 
+    /** Smart listening ko bata do ki list me se chunna hai (taaki "ek / do / teen" sahi likhe) */
+    fun choiceHint(): String? {
+        val pc = pendingCall ?: return null
+        if (System.currentTimeMillis() - pc.at > 90_000) return null
+        val from = if (pc.byName && pc.options.size > 3) pc.page * PAGE else 0
+        val page = if (pc.byName && pc.options.size > 3) pc.options.subList(from, minOf(from + PAGE, pc.options.size)) else pc.options
+        val names = page.mapIndexed { i, p -> "${from + i + 1} = ${if (pc.byName) p.name else p.label.ifBlank { "number" }}" }.joinToString("; ")
+        return "The user is picking one item from a numbered list on screen ($names). They will most likely say just a number " +
+            "(ek, do, teen, char, paanch, one, two, three, pehla, doosra, first, second…), \"more\", \"cancel\", or a name from the list. " +
+            "If they say a number in any language, write it as a digit (ek = 1, do = 2, teen = 3)."
+    }
+
     /** Chup rehne par halka sa yaad dilana */
     fun choicePrompt(): Reply {
         val pc = pendingCall

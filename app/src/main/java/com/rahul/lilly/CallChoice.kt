@@ -95,15 +95,16 @@ object CallChoice {
         7 to setOf("eighth", "8th", "eight", "aathva", "athva", "aath"),
         8 to setOf("ninth", "9th", "nine", "nauva", "nau"),
         9 to setOf("tenth", "10th", "ten", "dasva", "das"),
-        0 to setOf("first", "1st", "one", "1", "pehla", "pehle", "pehli", "pahla", "pahle", "upar", "upar wala", "ek"),
-        1 to setOf("second", "2nd", "two", "2", "doosra", "dusra", "doosri", "dusri", "doosre", "dusre", "do"),
-        2 to setOf("third", "3rd", "three", "3", "teesra", "tisra", "teesri", "tisri", "teen"),
-        3 to setOf("fourth", "4th", "four", "4", "chautha", "chauthi", "char", "chaar"),
-        4 to setOf("fifth", "5th", "five", "5", "paanchva", "panchva", "paanch", "panch")
+        0 to setOf("first", "1st", "one", "1", "pehla", "pehle", "pehli", "pahla", "pahle", "upar", "upar wala", "ek", "aik", "ik", "eik"),
+        1 to setOf("second", "2nd", "two", "2", "doosra", "dusra", "doosri", "dusri", "doosre", "dusre", "do", "doo", "dho"),
+        2 to setOf("third", "3rd", "three", "3", "teesra", "tisra", "teesri", "tisri", "teen", "tin", "tiin", "theen"),
+        3 to setOf("fourth", "4th", "four", "4", "chautha", "chauthi", "char", "chaar", "chhar"),
+        4 to setOf("fifth", "5th", "five", "5", "paanchva", "panchva", "paanch", "panch", "pach", "paach")
     )
     // "do" (karo/give) aur "ek" bahut aam shabd hain — sirf chhote jawab me ginti maano
     private val ambiguousOrdinals = setOf(
-        "do", "ek", "teen", "char", "chaar", "paanch", "panch", "one", "chhe", "saat", "aath", "nau", "das"
+        "do", "ek", "teen", "char", "chaar", "paanch", "panch", "one", "chhe", "saat", "aath", "nau", "das",
+        "aik", "ik", "eik", "doo", "dho", "tin", "tiin", "theen", "chhar", "pach", "paach"
     )
     private val fillerWords = setOf(
         "wala", "wale", "wali", "vala", "vale", "vali", "ko", "call", "karo", "kar", "do", "pe", "par", "the", "one",
@@ -155,9 +156,20 @@ object CallChoice {
      * User ne kaun sa option chuna? options = screen par dikhaye gaye (number ya naam).
      * @return option ka index, ya null agar samajh na aaye / ek se zyada mil jaayein
      */
+    /** English recognizer Hindi ginti ko aise likh deta hai: "ek" -> "egg", "teen" -> "tin" (sirf 1-2 shabd ke jawab me) */
+    private val misheardNums = mapOf(
+        "egg" to "1", "ache" to "1", "ech" to "1", "eck" to "1", "ek" to "1", "x" to "1", "won" to "1", "van" to "1",
+        "to" to "2", "too" to "2", "tu" to "2", "doe" to "2", "dough" to "2",
+        "tin" to "3", "tean" to "3", "teen" to "3", "tree" to "3", "free" to "3",
+        "for" to "4", "car" to "4", "char" to "4", "chart" to "4",
+        "punch" to "5", "pants" to "5", "bunch" to "5", "fife" to "5"
+    )
+
     fun pick(answerRaw: String, options: List<Phone>, byName: Boolean): Int? {
         if (options.isEmpty()) return null
-        val t = Parser.normalize(answerRaw).replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+        var t = Parser.normalize(answerRaw).replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+        val ws = t.split(" ").filter { it.isNotBlank() && it !in setOf("number", "no", "num", "wala", "vala", "wale", "please", "the") }
+        if (ws.size == 1) misheardNums[ws[0]]?.let { t = it }
         if (t.isBlank()) return null
         val words = t.split(" ")
         val short = words.size <= 3

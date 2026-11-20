@@ -718,9 +718,11 @@ class LillyService : Service() {
         val pref = prefs.getString("lang", "auto") ?: "auto"
         // Auto: jis bhasha me pichhli baar bole the, wahi pehle (English bola toh English likhega, Hindi toh Hindi);
         // doosri bhasha saath me, taaki beech me badlo toh bhi samjhe
-        val lang = when (pref) {
-            "en" -> "en-IN"
-            "hi" -> "hi-IN"
+        val lang = when {
+            pref == "en" -> "en-IN"
+            pref == "hi" -> "hi-IN"
+            // List me se chunna hai ("ek / do / teen") — Hindi recognizer ginti behtar sunta hai (English bhi samajhta hai)
+            command && brain.awaitingChoice() -> "hi-IN"
             else -> if (english) "en-IN" else "hi-IN"
         }
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
@@ -895,7 +897,7 @@ class LillyService : Service() {
                 val key = (prefs.getString("ai_key", "") ?: "").filter { !it.isWhitespace() }
                 val app = applicationContext
                 Thread {
-                    val text = SmartEar.transcribe(app, key, pcm)
+                    val text = SmartEar.transcribe(app, key, pcm, brain.choiceHint())
                     handler.post {
                         lastEvent = System.currentTimeMillis()
                         if (mode != Mode.COMMAND) return@post

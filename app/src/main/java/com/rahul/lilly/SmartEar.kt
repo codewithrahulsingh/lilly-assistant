@@ -84,7 +84,7 @@ object SmartEar {
                         waitedMs += 20
                         if (loud) {
                             speechMs += 20
-                            if (speechMs >= 100) {
+                            if (speechMs >= 60) {
                                 speech = true
                                 for (f in pre) { val k = minOf(f.size, max - pos); System.arraycopy(f, 0, out, pos, k); pos += k }
                                 pre.clear()
@@ -142,13 +142,14 @@ object SmartEar {
     }
 
     /** Gemini se likhwao (background thread). null = nahi ho paya */
-    fun transcribe(ctx: Context, key: String, pcm: ShortArray): String? {
+    fun transcribe(ctx: Context, key: String, pcm: ShortArray, hint: String? = null): String? {
         val names = names(ctx)
         val prompt = "Transcribe this short voice command spoken to a phone assistant named Lilly by an Indian user (Hindi, English or Hinglish). " +
             "Write ONLY the exact words spoken, in Roman (Latin) script: English words in correct English spelling " +
             "(WhatsApp, WiFi, Bluetooth, Spotify, YouTube, missed call, notifications, check, alarm), Hindi words in simple Hinglish " +
             "(karo, kya, hai, gaana, chalao, bhejo, ki). Do not translate, do not answer, no quotes, no punctuation at the end. " +
             (if (names.isNotBlank()) "Names the user may say (use this spelling if heard): $names. " else "") +
+            (if (hint != null) "Context: $hint " else "") +
             "If nothing clear was said, output EMPTY."
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("parts", JSONArray()
