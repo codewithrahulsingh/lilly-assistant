@@ -10,8 +10,8 @@ android {
         applicationId = "com.rahul.lilly"
         minSdk = 24
         targetSdk = 34
-        versionCode = 47
-        versionName = "7.0"
+        versionCode = 48
+        versionName = "7.1"
         // Sirf phone wale processor: APK chhoti aur install tez
         ndk { abiFilters += listOf("arm64-v8a") }
         // Spotify login ke baad wapas Lilly me aane ka raasta (lilly://spotify-callback)
