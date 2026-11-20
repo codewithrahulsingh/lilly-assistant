@@ -106,6 +106,8 @@ class LillyService : Service() {
 
         /** Bahar se kuch bulwana (jagah wala reminder) */
         const val ACTION_SAY = "com.rahul.lilly.SAY"
+        /** App ke button se: jaise yeh baat boli gayi ho */
+        const val ACTION_RUN = "com.rahul.lilly.RUN"
 
         fun stop(ctx: Context) {
             ctx.startService(Intent(ctx, LillyService::class.java).setAction(ACTION_STOP))
@@ -318,6 +320,14 @@ class LillyService : Service() {
                 handler.postDelayed(resumeMic, 3 * 60_000L) // bhool gaye toh bhi 3 min baad wapas
             }
             ACTION_RESUME_MIC -> { handler.removeCallbacks(resumeMic); resumeMic.run() }
+            ACTION_RUN -> intent.getStringExtra("text")?.let { t ->
+                handler.postDelayed({
+                    if (mode == Mode.STOPPED) return@postDelayed
+                    stopVosk()
+                    LillyBus.heard("“$t”")
+                    tapAnswer(t)
+                }, 350)
+            }
             ACTION_SAY -> intent.getStringExtra("text")?.let { t ->
                 val run = { sayBi("Reminder: $t", "याद दिला दूँ: $t") { if (mode != Mode.STOPPED) listen(Mode.WAKE) } }
                 if (mode == Mode.WAKE) run() else handler.postDelayed({ run() }, 4000)
