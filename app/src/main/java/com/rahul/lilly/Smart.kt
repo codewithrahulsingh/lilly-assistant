@@ -63,7 +63,7 @@ object Smart {
         if (c is Cmd.PlayMusic) {
             // Parser ka gaana saaf hai (app ke shabd nahi) toh wahi
             if (!appWord.containsMatchIn(c.query) && !Regex("""\b(kholo|open|aur|and)\b""").containsMatchIn(c.query)) {
-                val q = edgeStrip(c.query) // "accha sa gaana" -> koi bhi gaana
+                val q = Actions.moodQuery(t, edgeStrip(c.query)) ?: edgeStrip(c.query) // "accha sa gaana" -> koi bhi gaana
                 return c.copy(query = q, app = if (app.isNotBlank() && app !in setOf("youtube", "spotify")) app else c.app.ifBlank { app })
             }
         } else if (c !is Cmd.Unknown && c !is Cmd.OpenApp) return null
@@ -71,7 +71,8 @@ object Smart {
         var rest = t
         Regex("""\b(?:kholo|khol do|open|start|chalu karo)\b.*?\b(?:aur|and|then|phir|fir)\b\s*(.+)""").find(t)?.let { rest = it.groupValues[1] }
         rest = rest.replace(appWord, " ").replace(Regex("""\s+"""), " ").trim()
-        val q = edgeStrip(rest)
+        val q0 = edgeStrip(rest)
+        val q = Actions.moodQuery(t, q0) ?: q0
         if (q.isBlank() && c is Cmd.OpenApp) return null // "spotify kholo" = sirf app kholo
         return Cmd.PlayMusic(q, app)
     }

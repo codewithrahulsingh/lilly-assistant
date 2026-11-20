@@ -128,6 +128,16 @@ class LillyAccess : AccessibilityService() {
         /** Settings me WiFi / Bluetooth / Location / Airplane ka switch on ya off karo */
         fun flipSwitch(name: String, on: Boolean) = start("switch", "$name|$on", 12_000)
 
+        /** Screenshot / lock jaise system kaam (Android 9+) */
+        fun global(action: Int) {
+            val i = instance
+            if (i != null) { i.performGlobalAction(action); return }
+            start("global", action.toString(), 8_000)
+        }
+
+        /** Camera ka shutter / record button dabao */
+        fun pressShutter(video: Boolean) = start(if (video) "record" else "shutter", "", 12_000)
+
         /** Call screen par "Speaker" dabao */
         fun pressSpeaker() = start("speaker", "", 15_000)
 
@@ -225,6 +235,7 @@ class LillyAccess : AccessibilityService() {
     private fun tryTap() {
         val j = job ?: return
         if (!active()) return
+        if (j.kind == "global") { job = null; performGlobalAction(j.query.toIntOrNull() ?: return); return }
         val root = try { rootInActiveWindow } catch (e: Exception) { null } ?: return
         val pkg = root.packageName?.toString() ?: return
         if (pkg == packageName) return
@@ -267,6 +278,16 @@ class LillyAccess : AccessibilityService() {
                     job = null
                     main.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 1200)
                 }
+            }
+            "shutter", "record" -> {
+                if (!Regex("camera|cam|snap|gcam", RegexOption.IGNORE_CASE).containsMatchIn(pkg)) return
+                val re = if (j.kind == "record") Regex("(?i)^(?:record|start record|start video|video|record video|shutter|रिकॉर्ड)")
+                else Regex("(?i)^(?:shutter|take photo|take picture|capture|photo|camera button|shoot|click|शटर|फ़ोटो लें)")
+                val btn = findAll(root) { n ->
+                    val l = ((n.contentDescription ?: n.text)?.toString() ?: "").trim()
+                    n.isVisibleToUser && re.containsMatchIn(l)
+                }.firstOrNull() ?: return
+                if (clickable(btn)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) job = null
             }
             "speaker" -> {
                 if (!Regex("dialer|incall|telecom|phone|contacts|call", RegexOption.IGNORE_CASE).containsMatchIn(pkg)) return

@@ -909,3 +909,23 @@ class LearnedSpellingTest {
         Parser.setCustomSpellings(emptyMap())
     }
 }
+
+class ActionsTest {
+    @org.junit.Test fun items5to12() {
+        val eq = { a: Any, b: Any -> org.junit.Assert.assertEquals(a, b) }
+        eq(Cmd.PlayMusic("sad hindi songs", ""), Parser.parse("sad gaane chalao"))
+        eq(Cmd.PlayMusic("songs like kesariya", ""), Parser.parse("kesariya jaisa gaana chalao"))
+        eq(AppSearchCmd("amazon", "charger"), Parser.parse("amazon pe charger search karo"))
+        eq(AppSearchCmd("uber", "airport"), Parser.parse("uber book karo airport ke liye"))
+        eq(CameraCmd("selfie"), Parser.parse("selfie lo"))
+        eq(DeviceCmd("screenshot"), Parser.parse("screenshot lo"))
+        eq(DeviceCmd("rotate_off"), Parser.parse("rotation band karo"))
+        eq(UpiCmd("rahul", "500"), Parser.parse("rahul ko 500 rupaye bhejo"))
+        eq(UpiSaveCmd("rahul", "rahul.k@okaxis"), Parser.parse("Rahul ki UPI ID rahul.k@okaxis hai"))
+        eq(PlaceSaveCmd("home"), Parser.parse("ye mera ghar hai"))
+        eq(PlaceReminderCmd("home", "doodh lena hai"), Parser.parse("ghar pahunch ke yaad dilana ki doodh lena hai"))
+        eq(RoutineMakeCmd("office mode", listOf("silent karo", "wifi on karo")), Parser.parse("routine banao office mode jisme silent karo aur wifi on karo"))
+        eq(Cmd.OpenApp("amazon"), Parser.parse("amazon kholo"))
+        org.junit.Assert.assertTrue(Parser.parse("10 minute baad yaad dilana") is Cmd.Alarm)
+    }
+}

@@ -673,6 +673,7 @@ object Parser {
     fun parse(input: String): Cmd {
         val t = normalize(input)
         if (t.isBlank()) return Cmd.Unknown("")
+        Actions.upiSave(roman(input))?.let { return it }
         // Janamdin / DOB — "date" shabd ki wajah se aaj ki tareekh na bata de
         if (!Regex("""\b(yaad|remember|note|bhool|forget)\b""").containsMatchIn(t)) Smart.personal(t)?.let { return it }
         return Smart.refine(t, parseRules(input, t))
@@ -685,6 +686,7 @@ object Parser {
 
         Extras.note(t)?.let { return it }
         Extras.sleep(t)?.let { return it }
+        Actions.early(t)?.let { return it }
 
         // Yaaddasht: "yaad rakhna ki…" / "remember that…" / "bhool jao ki…" / "mere baare me kya yaad hai"
         memoryCmd(t)?.let { return it }
@@ -694,6 +696,7 @@ object Parser {
 
         // Call log, list/notes, calendar
         Extras.parse(t)?.let { return it }
+        Actions.parse(t)?.let { return it }
 
         // WhatsApp, rasta, notifications, good morning, mausam, phone settings
         MoreCommands.parse(t)?.let { return it }

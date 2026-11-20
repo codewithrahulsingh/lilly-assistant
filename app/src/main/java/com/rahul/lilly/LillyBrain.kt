@@ -135,7 +135,10 @@ class LillyBrain(private val ctx: Context) {
         abuseReply(heard.firstOrNull { Abuse.has(Parser.normalize(it)) || Abuse.toggle(Parser.normalize(it)) != null } ?: heard.first())?.let { return it }
         // Seekhe hue phrase ("good night") ko asli command ("turn off the torch") se badlo
         val texts = heard.map { learner.rewrite(it) ?: it }.distinct()
+        answerHabit(texts)?.let { return it }
+        runRoutine(texts.first())?.let { return it }
         val reply = twoAtOnce(texts.first()) ?: decide(texts, allowAi)
+        if (!reply.failed && reply.action != null) noteHabit(texts.first())
         if (reply.failed) learner.noteFailure(heard.first())
         else if (reply.action != null) learner.noteSuccess(texts.first())
         return reply
@@ -182,6 +185,250 @@ class LillyBrain(private val ctx: Context) {
         }
         val (d, sp) = Abuse.reply(on, en, t)
         return Reply(d, sp, endChat = false)
+    }
+
+    // ---------- 6. Aadat (habit) ----------
+
+    private fun noteHabit(text: String) {
+        val c = Parser.parse(text)
+        if (c !is Cmd.PlayMusic && c !is Cmd.Call && c !is Cmd.OpenApp && c !is AppSearchCmd && c !is WhatsAppCmd) return
+        if (c is Cmd.PlayMusic && c.query.isBlank()) return
+        val list = Habits.load(prefs.getString("habits", null))
+        list.add(Habits.Use(Parser.normalize(text), Calendar.getInstance().get(Calendar.HOUR_OF_DAY), System.currentTimeMillis()))
+        prefs.edit().putString("habits", Habits.save(list)).apply()
+    }
+
+    private var habitAsked: String? = null
+    private var habitAskedAt = 0L
+
+    /** "Lilly" bulaya: roz is waqt jo karte ho wo poochho. (English, Hindi) ya null */
+    fun habitGreeting(): Pair<String, String>? {
+        if (!prefs.getBoolean("habit_suggest", true)) return null
+        val now = System.currentTimeMillis()
+        val t = Habits.suggest(Habits.load(prefs.getString("habits", null)), now, prefs.getLong("habit_last", 0)) ?: return null
+        habitAsked = t
+        habitAskedAt = now
+        prefs.edit().putLong("habit_last", now).apply()
+        return Pair("Yes Rahul. Around this time you usually say “$t” — should I do it?", "हाँ राहुल। रोज़ इस समय आप \"$t\" बोलते हो — कर दूँ?")
+    }
+
+    private fun answerHabit(texts: List<String>): Reply? {
+        val t = habitAsked ?: return null
+        habitAsked = null
+        if (System.currentTimeMillis() - habitAskedAt > 30_000) return null
+        val n = Parser.normalize(texts.first())
+        if (yesRe.matches(n) || Regex("""^(?:haan|han|ha|yes|ok|okay|kar do|chalao|chala do|sure|haan ji)\b""").containsMatchIn(n)) return decide(listOf(t), false)
+        if (Regex("""^(?:no|nahi|nahin|na|abhi nahi|not now|rehne do)\b""").containsMatchIn(n)) return Reply("Okay, what can I do?", "ठीक है, बोलो क्या करूँ?", endChat = false)
+        return null // kuch aur bola — wahi karo
+    }
+
+    // ---------- 7. Routines ----------
+
+    private fun routines(): MutableMap<String, List<String>> {
+        val out = LinkedHashMap<String, List<String>>()
+        try {
+            val o = org.json.JSONObject(prefs.getString("routines", "{}") ?: "{}")
+            for (k in o.keys()) { val a = o.getJSONArray(k); out[k] = List(a.length()) { a.getString(it) } }
+        } catch (e: Exception) { }
+        return out
+    }
+
+    private fun saveRoutines(m: Map<String, List<String>>) {
+        val o = org.json.JSONObject()
+        for ((k, v) in m) o.put(k, org.json.JSONArray(v))
+        prefs.edit().putString("routines", o.toString()).apply()
+    }
+
+    private fun routineMakeReply(c: RoutineMakeCmd): Reply {
+        val m = routines()
+        m[c.name.lowercase()] = c.steps
+        saveRoutines(m)
+        return Reply("Routine “${c.name}” saved:\n" + c.steps.joinToString("\n") { "• $it" } + "\n\nSay “${c.name}” to run it.",
+            "${c.name} रूटीन बना दिया। जब चाहिए बोलिए: ${c.name}", endChat = true)
+    }
+
+    /** Bola hua kisi routine ka naam hai? Toh uske saare kaam ek ke baad ek */
+    private fun runRoutine(text: String): Reply? {
+        val n = Parser.normalize(text).replace(Regex("""\s+(?:chalao|chala do|start karo|on karo|shuru karo|lagao|run|start|mode)$"""), "").trim()
+        val all = routines()
+        val key = all.keys.firstOrNull { k -> n == k || n == k.removeSuffix(" mode") || "$n mode" == k } ?: return null
+        val steps = all[key] ?: return null
+        val replies = steps.map { decide(listOf(it), false) }.filter { !it.failed && it.askAi == null && it.later == null }
+        if (replies.isEmpty()) return Reply("I couldn't do the steps of “$key”", "$key रूटीन नहीं चल पाया", endChat = true, failed = true)
+        val main = Handler(Looper.getMainLooper())
+        return Reply(
+            "▶ $key:\n" + replies.joinToString("\n") { "• ${it.display.lines().first()}" },
+            "$key चालू। " + replies.joinToString("। ") { it.spoken },
+            action = { replies.forEachIndexed { i, r -> r.action?.let { a -> main.postDelayed({ a() }, i * 1300L) } } },
+            endChat = true,
+            spokenEn = "$key started"
+        )
+    }
+
+    // ---------- 12. App ke andar search / ride ----------
+
+    private fun appSearchReply(c: AppSearchCmd): Reply {
+        val q = c.query
+        val enc = Uri.encode(q)
+        fun view(url: String, pkg: String?): Intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).also { if (pkg != null && installed(pkg)) it.setPackage(pkg) }
+        fun clip() { try { (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("search", q)) } catch (e: Exception) { } }
+        val name = mapOf("amazon" to "Amazon", "flipkart" to "Flipkart", "myntra" to "Myntra", "zomato" to "Zomato", "swiggy" to "Swiggy",
+            "blinkit" to "Blinkit", "zepto" to "Zepto", "uber" to "Uber", "ola" to "Ola", "rapido" to "Rapido", "google" to "Google", "playstore" to "Play Store")[c.app] ?: c.app
+        return when (c.app) {
+            "amazon" -> Reply("Searching $q on Amazon", "अमेज़न पर $q ढूँढ रही हूँ", { openExternal(view("https://www.amazon.in/s?k=$enc", "in.amazon.mShop.android.shopping"), name) }, endChat = true)
+            "flipkart" -> Reply("Searching $q on Flipkart", "फ्लिपकार्ट पर $q ढूँढ रही हूँ", { openExternal(view("https://www.flipkart.com/search?q=$enc", "com.flipkart.android"), name) }, endChat = true)
+            "myntra" -> Reply("Searching $q on Myntra", "मिंत्रा पर $q ढूँढ रही हूँ", { openExternal(view("https://www.myntra.com/${Uri.encode(q.replace(' ', '-'))}", "com.myntra.android"), name) }, endChat = true)
+            "google" -> Reply("Searching Google for $q", "गूगल पर $q ढूँढ रही हूँ", {
+                openExternal(Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, q), "Google")
+            }, endChat = true)
+            "playstore" -> Reply("Searching $q on Play Store", "प्ले स्टोर पर $q ढूँढ रही हूँ", { openExternal(view("market://search?q=$enc", "com.android.vending"), name) }, endChat = true)
+            "uber" -> {
+                val dest = placeAddress(q)
+                val url = if (dest.isBlank()) "uber://?action=setPickup&pickup=my_location"
+                else "uber://?action=setPickup&pickup=my_location&dropoff[formatted_address]=${Uri.encode(dest)}"
+                val i = if (installed("com.ubercab")) Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                else Intent(Intent.ACTION_VIEW, Uri.parse(url.replace("uber://?", "https://m.uber.com/ul/?")))
+                Reply(if (dest.isBlank()) "Opening Uber" else "Opening Uber to $q — check the fare and tap Confirm",
+                    if (dest.isBlank()) "ऊबर खोल रही हूँ" else "$q के लिए ऊबर खोल रही हूँ, किराया देख के कन्फ़र्म कीजिए", { openExternal(i, name) }, endChat = true)
+            }
+            else -> {
+                // Zomato / Swiggy / Ola / Rapido / Blinkit / Zepto: app kholo, jo dhoondhna hai wo copy (paste kar lo)
+                val pkg = mapOf("zomato" to "com.application.zomato", "swiggy" to "in.swiggy.android", "ola" to "com.olacabs.customer",
+                    "rapido" to "com.rapido.passenger", "blinkit" to "com.grofers.customerapp", "zepto" to "com.zeptoconsumerapp")[c.app]
+                val launch = pkg?.let { ctx.packageManager.getLaunchIntentForPackage(it) }
+                    ?: return Reply("$name isn't installed on this phone", "इस फ़ोन में $name नहीं है", endChat = true, failed = true)
+                val tip = if (q.isNotBlank()) " — “$q” is copied, just paste it in search" else ""
+                Reply("Opening $name$tip", "$name खोल रही हूँ" + if (q.isNotBlank()) "। $q कॉपी कर दिया है, सर्च में पेस्ट कर लीजिए" else "",
+                    { if (q.isNotBlank()) clip(); openExternal(launch, name) }, endChat = true)
+            }
+        }
+    }
+
+    /** "ghar" / "office" -> saved address */
+    private fun placeAddress(q: String): String = when (q.trim()) {
+        "ghar", "home", "mere ghar" -> prefs.getString("home_address", null) ?: q
+        "office", "work", "kaam" -> prefs.getString("office_address", null) ?: q
+        else -> q
+    }
+
+    // ---------- 11. Camera ----------
+
+    private fun cameraReply(mode: String): Reply {
+        val video = mode == "video"
+        val i = Intent(if (video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+        if (mode == "selfie") {
+            i.putExtra("android.intent.extras.CAMERA_FACING", 1)
+            i.putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+            i.putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+        }
+        // Google Camera: 3 second timer ke saath khud photo
+        if (!video) {
+            i.putExtra("android.intent.extra.TIMER_DURATION_SECONDS", 3)
+            i.putExtra("com.google.assistant.extra.CAMERA_OPEN_ONLY", false)
+        }
+        val auto = LillyAccess.usable(ctx)
+        val en = when (mode) { "video" -> "Starting video"; "selfie" -> "Selfie in 3, 2, 1 — smile!"; else -> "Photo in 3, 2, 1" }
+        val hi = when (mode) { "video" -> "वीडियो शुरू कर रही हूँ"; "selfie" -> "सेल्फ़ी, तीन, दो, एक — स्माइल!"; else -> "फ़ोटो, तीन, दो, एक" }
+        return Reply(en + if (auto) "" else "\n(Tap the shutter if it doesn't click by itself)", hi, {
+            openExternal(i, "Camera")
+            if (auto) Handler(Looper.getMainLooper()).postDelayed({ LillyAccess.pressShutter(video) }, if (video) 1500 else 3200)
+        }, endChat = true)
+    }
+
+    // ---------- 10. Screenshot / rotate / lock ----------
+
+    private fun deviceReply(what: String): Reply = when (what) {
+        "screenshot", "lock" -> {
+            val code = if (what == "screenshot") 9 /* GLOBAL_ACTION_TAKE_SCREENSHOT */ else 8 /* GLOBAL_ACTION_LOCK_SCREEN */
+            if (Build.VERSION.SDK_INT < 28) Reply("This needs Android 9 or newer", "इसके लिए नया एंड्रॉयड चाहिए", endChat = true, failed = true)
+            else if (!LillyAccess.usable(ctx)) Reply(
+                if (what == "screenshot") "For screenshots I need the Lilly helper (or its Auto mode). For now press Power + Volume down"
+                else "To lock the phone I need the Lilly helper (or its Auto mode)",
+                if (what == "screenshot") "स्क्रीनशॉट के लिए लिली हेल्पर चाहिए। अभी पावर और वॉल्यूम डाउन दबाइए" else "फ़ोन लॉक के लिए लिली हेल्पर चाहिए",
+                endChat = true, failed = true)
+            else Reply(if (what == "screenshot") "Taking a screenshot" else "Locking the phone",
+                if (what == "screenshot") "स्क्रीनशॉट ले रही हूँ" else "फ़ोन लॉक कर रही हूँ", {
+                    Handler(Looper.getMainLooper()).postDelayed({ LillyAccess.global(code) }, if (what == "screenshot") 1500 else 300)
+                }, endChat = true)
+        }
+        else -> {
+            val on = what == "rotate_on"
+            if (!Settings.System.canWrite(ctx)) Reply(
+                "To change auto-rotate I need one permission. I'm opening it — allow Lilly there, then ask again",
+                "ऑटो रोटेट के लिए एक परमिशन चाहिए। खोल रही हूँ, वहाँ लिली को अलाउ करके फिर से बोलिए",
+                { openExternal(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + ctx.packageName)), "Settings") }, endChat = true)
+            else Reply(if (on) "Auto-rotate on" else "Auto-rotate off", if (on) "ऑटो रोटेट ऑन कर दिया" else "ऑटो रोटेट बंद कर दिया", {
+                try { Settings.System.putInt(ctx.contentResolver, Settings.System.ACCELEROMETER_ROTATION, if (on) 1 else 0) } catch (e: Exception) { }
+            }, endChat = true)
+        }
+    }
+
+    // ---------- 9. UPI ----------
+
+    private fun upiIds(): MutableMap<String, String> = SpellBook.load(prefs.getString("upi_ids", null))
+
+    private fun upiSaveReply(c: UpiSaveCmd): Reply {
+        val m = upiIds()
+        m[c.name.lowercase()] = c.vpa
+        prefs.edit().putString("upi_ids", SpellBook.save(m)).apply()
+        return Reply("Saved ${c.name}'s UPI ID: ${c.vpa}", "${CallChoice.speakName(c.name)} की यूपीआई आईडी याद रख ली", endChat = true)
+    }
+
+    private fun upiReply(c: UpiCmd): Reply {
+        val ids = upiIds()
+        val w = Parser.normName(c.target)
+        val hit = ids.entries.firstOrNull { Parser.normName(it.key) == w } ?: ids.entries.firstOrNull { Parser.normName(it.key).contains(w) || w.contains(Parser.normName(it.key)) }
+        if (hit == null) return Reply(
+            "I don't have ${c.target}'s UPI ID yet. Tell me once: “${c.target} ki UPI ID … hai”, or add it in the Lilly app (UPI contacts).",
+            "${CallChoice.speakName(c.target)} की यूपीआई आईडी नहीं पता। एक बार बोलिए: ${c.target} की यूपीआई आईडी … है",
+            endChat = true, failed = true)
+        val name = hit.key.split(" ").joinToString(" ") { it.replaceFirstChar { ch -> ch.uppercase() } }
+        val uri = Uri.parse("upi://pay?pa=${Uri.encode(hit.value)}&pn=${Uri.encode(name)}&am=${c.amount}&cu=INR&tn=${Uri.encode("Sent via Lilly")}")
+        val pay = Intent.createChooser(Intent(Intent.ACTION_VIEW, uri), "Pay ₹${c.amount} to $name with")
+        return Reply("₹${c.amount} to $name (${hit.value}) — pick your UPI app and enter your PIN. Lilly never sees the PIN.",
+            "$name को ${c.amount} रुपये — यूपीआई ऐप चुनिए और पिन ख़ुद डालिए", { openExternal(pay, "UPI") }, endChat = true)
+    }
+
+    // ---------- 8. Jagah pahunch ke yaad ----------
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun placeSaveReply(place: String): Reply {
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION))
+            return needPermission(Manifest.permission.ACCESS_FINE_LOCATION, "exact location", "लोकेशन")
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        val loc = listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER, android.location.LocationManager.PASSIVE_PROVIDER)
+            .mapNotNull { try { lm.getLastKnownLocation(it) } catch (e: Exception) { null } }
+            .filter { System.currentTimeMillis() - it.time < 15 * 60_000L }.minByOrNull { it.accuracy }
+            ?: return Reply("I couldn't get your location right now. Turn on location, open Google Maps once, and try again",
+                "अभी लोकेशन नहीं मिली। लोकेशन ऑन करके एक बार मैप्स खोलिए, फिर बोलिए", endChat = true, failed = true)
+        prefs.edit().putFloat("${place}_lat", loc.latitude.toFloat()).putFloat("${place}_lng", loc.longitude.toFloat()).apply()
+        val p = if (place == "home") "home" else "office"
+        return Reply("Saved this place as your $p ✓", if (place == "home") "ये जगह घर के तौर पर याद रख ली" else "ये जगह ऑफ़िस के तौर पर याद रख ली", endChat = true)
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun placeReminderReply(c: PlaceReminderCmd): Reply {
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION))
+            return needPermission(Manifest.permission.ACCESS_FINE_LOCATION, "exact location", "लोकेशन")
+        val lat = prefs.getFloat("${c.place}_lat", 0f)
+        val lng = prefs.getFloat("${c.place}_lng", 0f)
+        val p = if (c.place == "home") "home" else "office"
+        val pHi = if (c.place == "home") "घर" else "ऑफ़िस"
+        if (lat == 0f && lng == 0f) return Reply(
+            "First tell me where your $p is: when you're there, say “Lilly, ye mera $p hai”",
+            "पहले बताइए $pHi कहाँ है: जब वहाँ हों तब बोलिए — लिली, ये मेरा $pHi है", endChat = true, failed = true)
+        if (Build.VERSION.SDK_INT >= 29 && !granted("android.permission.ACCESS_BACKGROUND_LOCATION"))
+            return Reply("So I can remind you even when the phone is in your pocket, set Location to “Allow all the time” for Lilly. Opening it — then ask again.",
+                "जेब में फ़ोन होने पर भी याद दिलाने के लिए लोकेशन में ऑलवेज़ अलाउ चुनिए। खोल रही हूँ, फिर से बोलिए",
+                { openExternal(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)), "Settings") }, endChat = true)
+        val id = PlaceReminders.add(ctx, "$p: ${c.text}")
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        return try {
+            lm.addProximityAlert(lat.toDouble(), lng.toDouble(), 200f, -1, PlaceReminders.pending(ctx, id, c.text))
+            Reply("Okay, when you reach $p I'll remind you: ${c.text}", "ठीक है, $pHi पहुँचते ही याद दिला दूँगी: ${c.text}", endChat = true)
+        } catch (e: Exception) {
+            Reply("I couldn't set that reminder (${e.javaClass.simpleName})", "ये रिमाइंडर नहीं लग पाया", endChat = true, failed = true)
+        }
     }
 
     /** "torch jalao aur volume badhao" — dono kaam ek ke baad ek */
@@ -239,6 +486,14 @@ class LillyBrain(private val ctx: Context) {
             Cmd.Recall -> recallReply()
             is Cmd.RecallAbout -> recallAbout(main)
             is CallLogCmd -> callLogReply(main.kind)
+            is AppSearchCmd -> appSearchReply(main)
+            is CameraCmd -> cameraReply(main.mode)
+            is DeviceCmd -> deviceReply(main.what)
+            is UpiCmd -> upiReply(main)
+            is UpiSaveCmd -> upiSaveReply(main)
+            is PlaceSaveCmd -> placeSaveReply(main.place)
+            is PlaceReminderCmd -> placeReminderReply(main)
+            is RoutineMakeCmd -> routineMakeReply(main)
             is MusicCmd -> musicCmdReply(main)
             is ListCmd -> listReply(main)
             is CalendarCmd -> calendarReply(main)

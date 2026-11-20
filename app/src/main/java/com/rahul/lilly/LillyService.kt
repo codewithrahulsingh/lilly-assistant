@@ -98,10 +98,14 @@ class LillyService : Service() {
         const val CHANNEL = "lilly_bg"
         private const val NOTIF_ID = 7
 
-        fun start(ctx: Context, action: String? = null) {
+        fun start(ctx: Context, action: String? = null, text: String? = null) {
             val i = Intent(ctx, LillyService::class.java).setAction(action)
+            if (text != null) i.putExtra("text", text)
             ctx.startForegroundService(i)
         }
+
+        /** Bahar se kuch bulwana (jagah wala reminder) */
+        const val ACTION_SAY = "com.rahul.lilly.SAY"
 
         fun stop(ctx: Context) {
             ctx.startService(Intent(ctx, LillyService::class.java).setAction(ACTION_STOP))
@@ -312,6 +316,10 @@ class LillyService : Service() {
                 handler.postDelayed(resumeMic, 3 * 60_000L) // bhool gaye toh bhi 3 min baad wapas
             }
             ACTION_RESUME_MIC -> { handler.removeCallbacks(resumeMic); resumeMic.run() }
+            ACTION_SAY -> intent.getStringExtra("text")?.let { t ->
+                val run = { sayBi("Reminder: $t", "याद दिला दूँ: $t") { if (mode != Mode.STOPPED) listen(Mode.WAKE) } }
+                if (mode == Mode.WAKE) run() else handler.postDelayed({ run() }, 4000)
+            }
         }
         return START_STICKY
     }
@@ -1024,6 +1032,9 @@ class LillyService : Service() {
         followUp = false
         aiHistory.clear()
         holdAudioFocus(true)
+        // Aadat: roz is time jo karte ho, wo khud poochho
+        val habit = if (greetEn.startsWith("Yes Rahul")) brain.habitGreeting() else null
+        if (habit != null) { sayBi(habit.first, habit.second) { listen(Mode.COMMAND) }; return }
         sayBi(greetEn, greetHi) { listen(Mode.COMMAND) }
     }
 

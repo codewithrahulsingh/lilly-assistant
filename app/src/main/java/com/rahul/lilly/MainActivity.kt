@@ -54,6 +54,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var mediaCtlValue: TextView
     private lateinit var headValue: TextView
     private lateinit var smartValue: TextView
+    private lateinit var routinesValue: TextView
+    private lateinit var upiValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -247,6 +249,10 @@ class MainActivity : Activity(), LillyBus.Ui {
         spotifyConnValue = card(r15, "🟢", "Connect Spotify") { connectSpotify() }
         card(r15, "🎧", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
 
+        val r19 = row(col)
+        routinesValue = card(r19, "⚡", "Routines & habits") { routinesSetup() }
+        upiValue = card(r19, "💳", "UPI contacts") { upiSetup() }
+
         val r18 = row(col)
         smartValue = card(r18, "✍️", "Smart listening") { smartSetup() }
 
@@ -302,6 +308,8 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        routinesValue.text = "${jsonCount("routines")} routines · habits ${if (prefs.getBoolean("habit_suggest", true)) "ON" else "OFF"}"
+        upiValue.text = "${jsonCount("upi_ids")} saved — \"Rahul ko 500 bhejo\""
         smartValue.text = if (prefs.getBoolean("smart_listen", true)) "ON ✓ writes exactly what you say" else "OFF — phone's own recognizer"
         headValue.text = when {
             !prefs.getBoolean("headphone_mode", true) -> "OFF"
@@ -1354,6 +1362,12 @@ class MainActivity : Activity(), LillyBus.Ui {
                     "✨  NEW: after small jobs (torch, time…) just keep talking — no need to say Lilly again",
                     "📵  \"Kisne call kiya tha?\" / \"Missed calls\" / \"Call back\" / \"Redial\"",
                     "💬  \"Rahul ka message padho\" → \"Reply karo ki 5 minute mein aata hoon\" (WhatsApp khule bina)",
+                    "🎶  \"Sad gaane chalao\" / \"Workout ke gaane\" / \"Kesariya jaisa gaana chalao\"",
+                    "⚡  \"Routine banao office mode jisme silent karo aur WiFi on karo\" → \"Office mode\"",
+                    "📍  \"Ye mera ghar hai\" → \"Ghar pahunch ke yaad dilana ki doodh lena hai\"",
+                    "💳  \"Rahul ki UPI ID rahul@okaxis hai\" → \"Rahul ko 500 bhejo\" (PIN aap daalo)",
+                    "📸  \"Selfie lo\" / \"Photo khicho\" / \"Video record karo\" / \"Screenshot lo\" / \"Auto rotate band karo\"",
+                    "🛒  \"Amazon pe charger search karo\" / \"Zomato se pizza\" / \"Uber book karo airport ke liye\"",
                     "😴  \"30 minute baad gaana band karo\" / \"Sleep timer band karo\"",
                     "🎵  \"Gaana band karo\" / \"Gaana wapas chalao\" / \"Agla gaana\" / \"Pichla gaana\"",
                     "🎵  \"Ye kaunsa gaana hai?\" / \"Ye gaana like karo\" / \"Iske baad Kesariya lagao\"",
@@ -1539,6 +1553,83 @@ class MainActivity : Activity(), LillyBus.Ui {
                 }
             }
         }.start()
+    }
+
+    private fun jsonCount(key: String): Int = try { org.json.JSONObject(prefs.getString(key, "{}") ?: "{}").length() } catch (e: Exception) { 0 }
+
+    private fun routinesSetup() {
+        val o = try { org.json.JSONObject(prefs.getString("routines", "{}") ?: "{}") } catch (e: Exception) { org.json.JSONObject() }
+        val names = o.keys().asSequence().toList()
+        val items = names.map { n -> val a = o.getJSONArray(n); "⚡ $n: " + (0 until a.length()).joinToString(", ") { a.getString(it) } }.toMutableList()
+        val habit = prefs.getBoolean("habit_suggest", true)
+        items.add("🔁 Habit suggestions: ${if (habit) "ON — tap to turn off" else "OFF — tap to turn on"}")
+        AlertDialog.Builder(this).setTitle("⚡ Routines & habits")
+            .setItems(items.toTypedArray()) { _, w ->
+                if (w == names.size) {
+                    prefs.edit().putBoolean("habit_suggest", !habit).apply(); refreshCards(); routinesSetup(); return@setItems
+                }
+                val n = names[w]
+                AlertDialog.Builder(this).setTitle("Delete routine \"$n\"?")
+                    .setPositiveButton("Delete") { _, _ -> o.remove(n); prefs.edit().putString("routines", o.toString()).apply(); refreshCards(); routinesSetup() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+            .setPositiveButton("Add routine") { _, _ -> addRoutine() }
+            .setNeutralButton("How") { _, _ ->
+                AlertDialog.Builder(this).setTitle("Routines").setMessage(
+                    "A routine runs many jobs with one phrase.\n\nBy voice: \"Routine banao office mode jisme silent karo aur WiFi on karo\"\n" +
+                        "Then just say: \"Lilly, office mode\".\n\n" +
+                        "Habits: when you do the same thing at about the same time on 3+ days (like a gym playlist at 7 am), " +
+                        "Lilly asks \"should I do it?\" when you call her. Say haan or nahi."
+                ).setPositiveButton("OK", null).show()
+            }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun addRoutine() {
+        val name = android.widget.EditText(this).apply { hint = "Name, e.g. office mode"; setSingleLine() }
+        val steps = android.widget.EditText(this).apply { hint = "Jobs, one per line:\nsilent karo\nwifi on karo\noffice ka rasta dikhao"; minLines = 4 }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(name); addView(steps) }
+        AlertDialog.Builder(this).setTitle("New routine").setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val n = name.text.toString().trim().lowercase()
+                val list = steps.text.toString().split("\n", ",").map { it.trim() }.filter { it.isNotBlank() }
+                if (n.isNotBlank() && list.isNotEmpty()) {
+                    val o = try { org.json.JSONObject(prefs.getString("routines", "{}") ?: "{}") } catch (e: Exception) { org.json.JSONObject() }
+                    o.put(n, org.json.JSONArray(list))
+                    prefs.edit().putString("routines", o.toString()).apply()
+                    refreshCards()
+                }
+                routinesSetup()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun upiSetup() {
+        val o = try { org.json.JSONObject(prefs.getString("upi_ids", "{}") ?: "{}") } catch (e: Exception) { org.json.JSONObject() }
+        val names = o.keys().asSequence().toList()
+        val b = AlertDialog.Builder(this).setTitle("💳 UPI contacts")
+        if (names.isEmpty()) b.setMessage(
+            "Save a person's UPI ID once, then say \"Lilly, Rahul ko 500 bhejo\". Lilly opens your UPI app with the name and amount filled — you check it and enter your PIN yourself. Lilly never sees the PIN.\n\n" +
+                "Or say: \"Rahul ki UPI ID rahul@okaxis hai\"."
+        ) else b.setItems(names.map { "$it  →  ${o.getString(it)}" }.toTypedArray()) { _, w ->
+            val n = names[w]
+            AlertDialog.Builder(this).setTitle("Delete $n?")
+                .setPositiveButton("Delete") { _, _ -> o.remove(n); prefs.edit().putString("upi_ids", o.toString()).apply(); refreshCards(); upiSetup() }
+                .setNegativeButton("Cancel", null).show()
+        }
+        b.setPositiveButton("Add") { _, _ ->
+            val name = android.widget.EditText(this).apply { hint = "Name, e.g. Rahul"; setSingleLine() }
+            val vpa = android.widget.EditText(this).apply { hint = "UPI ID, e.g. 9876543210@ybl"; setSingleLine() }
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(name); addView(vpa) }
+            AlertDialog.Builder(this).setTitle("Add UPI contact").setView(box)
+                .setPositiveButton("Save") { _, _ ->
+                    val n = name.text.toString().trim().lowercase()
+                    val v = vpa.text.toString().trim().lowercase()
+                    if (n.isNotBlank() && Regex("""^[a-z0-9._\-]+@[a-z0-9.\-]+$""").matches(v)) {
+                        o.put(n, v); prefs.edit().putString("upi_ids", o.toString()).apply(); refreshCards()
+                    } else android.widget.Toast.makeText(this, "UPI ID looks wrong (needs @)", android.widget.Toast.LENGTH_LONG).show()
+                    upiSetup()
+                }.setNegativeButton("Cancel", null).show()
+        }.setNegativeButton("Close", null).show()
     }
 
     private fun smartSetup() {
