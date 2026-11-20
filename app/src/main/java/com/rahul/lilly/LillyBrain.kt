@@ -1211,10 +1211,18 @@ class LillyBrain(private val ctx: Context) {
         val pkg = waPackage() ?: return Reply("WhatsApp isn't installed on this phone", "इस फ़ोन में व्हाट्सऐप नहीं है", endChat = true, failed = true)
         val uri = Uri.parse("https://api.whatsapp.com/send?phone=${waNumber(w.phone.number)}&text=" + Uri.encode(w.text))
         val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)
-        val auto = LillyAccess.usable(ctx)
         val who = CallChoice.speakName(w.phone.name)
+        // Is insaan ka message abhi aaya hua hai? Toh notification ke "Reply" se seedha bhejo — WhatsApp khule bina, Send dabaye bina
+        if (MediaCtl.allowed(ctx)) {
+            val m = Inbox.findReply(w.phone.name) ?: Inbox.findReply(w.target)
+            if (m != null && m.pkg.contains("whatsapp") && Inbox.send(ctx, m, w.text)) {
+                if (w.phone.name.any { it.isLetter() }) learner.rememberContact(w.target, w.phone.name)
+                return Reply("Sent to ${w.phone.name}: “${w.text}” ✓", "$who को भेज दिया: ${w.text}", endChat = true)
+            }
+        }
+        val auto = LillyAccess.usable(ctx)
         return Reply(
-            if (auto) "Sending to ${w.phone.name}" else "Your message to ${w.phone.name} is ready in WhatsApp — tap Send",
+            if (auto) "Sending to ${w.phone.name}" else "Your message to ${w.phone.name} is ready in WhatsApp — tap Send.\n(WhatsApp lets other apps send by themselves only as a reply to a message that just arrived.)",
             if (auto) "$who को भेज रही हूँ" else "मैसेज लिख दिया है, भेजने के लिए सेंड दबाइए",
             {
                 if (w.phone.name.any { it.isLetter() }) learner.rememberContact(w.target, w.phone.name)
