@@ -343,7 +343,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         switchBinds.clear(); tileBinds.clear()
         pages = listOf(homePage(), settingsPage())
         pages.forEach { holder.addView(it, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
-        root.addView(dock(), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, dp(76)).apply {
+        root.addView(dock(), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, dp(72)).apply {
             gravity = Gravity.BOTTOM
             setMargins(dp(22), 0, dp(22), dp(18))
         })
@@ -390,14 +390,16 @@ class MainActivity : Activity(), LillyBus.Ui {
         col.addView(top)
 
         // Lilly ki baat — bade akshar (Siri jaisa)
-        status = txt("", 25f, Color.WHITE, 300).apply { letterSpacing = -0.01f; setPadding(0, dp(26), 0, 0); maxLines = 5; ellipsize = android.text.TextUtils.TruncateAt.END }
+        status = txt("", 24f, Color.WHITE, 300).apply { letterSpacing = -0.01f; setPadding(0, dp(22), 0, 0); maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }
         col.addView(status, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         heard = txt("", 14f, Ui.MIST, 400).apply { setPadding(0, dp(12), 0, 0); visibility = View.GONE }
         youBubble = heard
         col.addView(heard)
 
         orb = OrbView(this).apply { setOnClickListener { sendToEngine(LillyService.ACTION_ACTIVATE) } }
-        col.addView(orb, LinearLayout.LayoutParams(dp(210), dp(210)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(8) })
+        orb.minimumHeight = dp(130)
+        // Bachi jagah orb le leta hai — screen par scroll nahi aata
+        col.addView(orb, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(4); bottomMargin = dp(4) })
 
         // Bolne layak baatein (dabao = jaise boli)
         val chipsScroll = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER }
@@ -579,30 +581,46 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     // ---------------- Dock ----------------
 
+    private var dockHomeLabel: TextView? = null
+    private var dockGearLabel: TextView? = null
+    private var dockHomeBox: View? = null
+    private var dockGearBox: View? = null
+
     private fun dock(): View {
         val bar = android.widget.FrameLayout(this).apply {
-            background = glassBg(38, Color.argb(215, 26, 16, 50), Color.argb(64, 216, 180, 254))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(200, 38, 24, 70), Color.argb(225, 20, 12, 40))).apply {
+                cornerRadius = dp(36).toFloat(); setStroke(dp(1), Color.argb(55, 216, 180, 254))
+            }
             elevation = dp(10).toFloat()
-            clipChildren = false
         }
-        dockHome = IconView(this, "home", Color.WHITE).apply { setOnClickListener { showTab(0) } }
-        bar.addView(dockHome, android.widget.FrameLayout.LayoutParams(dp(56), dp(56), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(22) })
-        dockGear = IconView(this, "gear", Ui.MIST).apply { setOnClickListener { showTab(1) } }
-        bar.addView(dockGear, android.widget.FrameLayout.LayoutParams(dp(56), dp(56), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(22) })
-        val mic = android.widget.FrameLayout(this).apply {
-            background = android.graphics.drawable.LayerDrawable(arrayOf(
-                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Ui.INK) },
-                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#C084FC"), Color.parseColor("#7C3AED"))).apply { shape = GradientDrawable.OVAL }
-            )).apply { setLayerInset(1, dp(4), dp(4), dp(4), dp(4)) }
-            elevation = dp(14).toFloat()
+        fun tab(kind: String, label: String, gravity: Int, tap: () -> Unit): Triple<View, IconView, TextView> {
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; this.gravity = Gravity.CENTER
+                setPadding(dp(18), dp(6), dp(18), dp(6))
+                setOnClickListener { tap() }
+            }
+            val ic = IconView(this, kind, Color.WHITE, 1.7f)
+            box.addView(ic, LinearLayout.LayoutParams(dp(24), dp(24)))
+            val tx = txt(label, 10.5f, Color.WHITE, 500).apply { setPadding(0, dp(4), 0, 0) }
+            box.addView(tx)
+            bar.addView(box, android.widget.FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, gravity or Gravity.CENTER_VERTICAL).apply {
+                if (gravity == Gravity.START) leftMargin = dp(18) else rightMargin = dp(18)
+            })
+            return Triple(box, ic, tx)
+        }
+        val (hb, hi, ht) = tab("home", "Home", Gravity.START) { showTab(0) }
+        val (gb, gi, gt) = tab("sliders", "Settings", Gravity.END) { showTab(1) }
+        dockHomeBox = hb; dockHome = hi; dockHomeLabel = ht
+        dockGearBox = gb; dockGear = gi; dockGearLabel = gt
+        val mic = MicButton(this).apply {
             setOnClickListener {
                 performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                 showTab(0); sendToEngine(LillyService.ACTION_ACTIVATE)
             }
         }
-        mic.addView(IconView(this, "mic", Color.WHITE, 2.1f), android.widget.FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
         pressable(mic)
-        bar.addView(mic, android.widget.FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
+        bar.addView(mic, android.widget.FrameLayout.LayoutParams(dp(78), dp(78), Gravity.CENTER))
         return bar
     }
 
@@ -618,6 +636,11 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         dockHome?.apply { color = if (i == 0) Color.WHITE else Ui.DIM; invalidate() }
         dockGear?.apply { color = if (i == 1) Color.WHITE else Ui.DIM; invalidate() }
+        dockHomeLabel?.setTextColor(if (i == 0) Color.WHITE else Ui.DIM)
+        dockGearLabel?.setTextColor(if (i == 1) Color.WHITE else Ui.DIM)
+        val pillOn = { GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(Color.argb(34, 255, 255, 255)) } }
+        dockHomeBox?.background = if (i == 0) pillOn() else null
+        dockGearBox?.background = if (i == 1) pillOn() else null
         if (animate && changed) window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
     }
 
@@ -906,7 +929,8 @@ class MainActivity : Activity(), LillyBus.Ui {
     override fun onHeard(text: String) = runOnUiThread {
         heard.text = text
         if (youBubble != null) {
-            heard.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+            val empty = text.isBlank() || Regex("""^\W*(nothing|kuch nahi)?\W*$""", RegexOption.IGNORE_CASE).matches(text)
+            heard.visibility = if (empty) View.GONE else View.VISIBLE
             heard.text = if (text.isBlank() || text.startsWith("You said")) text else "You said " + text.trim()
         }
     }

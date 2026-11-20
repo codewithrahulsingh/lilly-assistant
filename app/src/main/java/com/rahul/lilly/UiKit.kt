@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.LinearGradient
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -82,9 +83,19 @@ class IconView(ctx: Context, var kind: String, var color: Int = Ui.MIST, private
                 c.drawLine(12f, 18f, 12f, 21f, p)
             }
             "home" -> {
-                path.moveTo(4f, 11f); path.lineTo(12f, 4f); path.lineTo(20f, 11f)
-                path.moveTo(6f, 9.5f); path.lineTo(6f, 20f); path.lineTo(18f, 20f); path.lineTo(18f, 9.5f)
+                // Gol kono wala ghar + darwaza
+                path.moveTo(4.5f, 10.2f); path.lineTo(11.2f, 4.6f); path.quadTo(12f, 4f, 12.8f, 4.6f); path.lineTo(19.5f, 10.2f)
+                path.lineTo(19.5f, 18.5f); path.quadTo(19.5f, 20f, 18f, 20f); path.lineTo(6f, 20f); path.quadTo(4.5f, 20f, 4.5f, 18.5f); path.close()
                 c.drawPath(path, p)
+                path.reset(); path.moveTo(9.8f, 20f); path.lineTo(9.8f, 15f); path.quadTo(9.8f, 14f, 10.8f, 14f); path.lineTo(13.2f, 14f)
+                path.quadTo(14.2f, 14f, 14.2f, 15f); path.lineTo(14.2f, 20f); c.drawPath(path, p)
+            }
+            "sliders" -> {
+                c.drawLine(4f, 7f, 20f, 7f, p); c.drawLine(4f, 17f, 20f, 17f, p)
+                p.style = Paint.Style.FILL; val fill = p.color
+                p.color = Ui.INK; c.drawCircle(9f, 7f, 2.6f, p); c.drawCircle(15f, 17f, 2.6f, p)
+                p.color = fill; p.style = Paint.Style.STROKE
+                c.drawCircle(9f, 7f, 2.6f, p); c.drawCircle(15f, 17f, 2.6f, p)
             }
             "gear" -> {
                 c.drawCircle(12f, 12f, 3.2f, p)
@@ -185,4 +196,46 @@ class GlowSwitch(ctx: Context, initial: Boolean, private val onChange: (Boolean)
         (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
         (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt()
     )
+}
+
+/** Dock ka mic: chamakta begni-gulabi gola, upar halki chamak, peeche roshni */
+class MicButton(ctx: Context) : View(ctx) {
+    private val d = ctx.resources.displayMetrics.density
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val icon = IconView(ctx, "mic", Color.WHITE, 2f)
+    var glow = 0f
+        set(v) { field = v; invalidate() }
+    private val pulse = ValueAnimator.ofFloat(0f, 1f, 0f).apply {
+        duration = 2600; repeatCount = ValueAnimator.INFINITE
+        addUpdateListener { glow = it.animatedValue as Float }
+    }
+
+    init { isClickable = true; contentDescription = "Talk to Lilly"; setLayerType(LAYER_TYPE_SOFTWARE, null) }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); pulse.start() }
+    override fun onDetachedFromWindow() { pulse.cancel(); super.onDetachedFromWindow() }
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f; val cy = height / 2f
+        val r = minOf(width, height) / 2f - 9 * d
+        // Peeche ki roshni (dheere saans jaisi)
+        p.shader = RadialGradient(cx, cy, r + 9 * d, intArrayOf(Color.argb((110 + 70 * glow).toInt(), 192, 132, 252), Color.TRANSPARENT), floatArrayOf(0.62f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r + 9 * d, p)
+        // Gola: upar-baayein halka lavender -> begni -> neeche-daayein gulabi
+        p.shader = LinearGradient(cx - r, cy - r, cx + r, cy + r,
+            intArrayOf(Color.parseColor("#C4B5FD"), Color.parseColor("#8B5CF6"), Color.parseColor("#7C3AED"), Color.parseColor("#D946EF")),
+            floatArrayOf(0f, 0.38f, 0.68f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r, p)
+        // Upar ki sheeshe jaisi chamak
+        p.shader = LinearGradient(cx, cy - r, cx, cy, Color.argb(90, 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r - 1.5f * d, p)
+        // Patla safed kinara
+        p.shader = null; p.style = Paint.Style.STROKE; p.strokeWidth = 1 * d; p.color = Color.argb(90, 255, 255, 255)
+        c.drawCircle(cx, cy, r - 0.5f * d, p); p.style = Paint.Style.FILL
+        // Mic
+        val s = (r * 0.92f).toInt()
+        c.save(); c.translate(cx - s / 2f, cy - s / 2f)
+        icon.layout(0, 0, s, s); icon.draw(c)
+        c.restore()
+    }
 }
