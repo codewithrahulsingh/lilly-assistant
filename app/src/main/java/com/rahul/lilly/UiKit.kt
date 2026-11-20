@@ -41,7 +41,7 @@ object Ui {
         "smartphone" to "\ue32c", "lock_open" to "\ue898", "battery_charging_full" to "\ue1a3", "notifications_off" to "\ue7f6",
         "lightbulb" to "\ue0f0", "wifi_off" to "\ue648", "shield" to "\ue9e0", "system_update" to "\ue62a", "palette" to "\ue40a",
         "fingerprint" to "\ue90d", "edit_note" to "\ue745", "sentiment_very_dissatisfied" to "\ue814", "call" to "\ue0b0",
-        "chat" to "\ue0b7", "queue_music" to "\ue03d", "touch_app" to "\ue913"
+        "chat" to "\ue0b7", "queue_music" to "\ue03d", "touch_app" to "\ue913", "alarm" to "\ue855", "battery_full" to "\ue1a4", "event" to "\ue878", "today" to "\ue8df"
     )
 
     fun icons(ctx: Context): Typeface = iconFont ?: try {

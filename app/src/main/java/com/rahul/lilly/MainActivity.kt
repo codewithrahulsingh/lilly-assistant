@@ -291,10 +291,11 @@ class MainActivity : Activity(), LillyBus.Ui {
     private var youBubble: TextView? = null
     private var dockHome: IconView? = null
     private var dockGear: IconView? = null
-    private var missedNum: TextView? = null
-    private var missedSub: TextView? = null
-    private var msgNum: TextView? = null
-    private var msgSub: TextView? = null
+    /** Home ke do widget — dabaa ke rakho toh badal sakte ho kya dikhe */
+    private class Widget(val pref: String, val def: String, val card: LinearLayout, val icon: TextView, val title: TextView, val num: TextView, val sub: TextView)
+    private val widgets = mutableListOf<Widget>()
+    private val widgetTypes = listOf("missed" to "Missed calls", "messages" to "New messages", "alarm" to "Next alarm",
+        "battery" to "Battery", "event" to "Next event", "date" to "Today")
     private var npTitle: TextView? = null
     private var npSub: TextView? = null
     private var npIcon: android.widget.ImageView? = null
@@ -434,8 +435,8 @@ class MainActivity : Activity(), LillyBus.Ui {
             clipToPadding = false; setPadding(dp(20), 0, dp(20), 0)
         }
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Notifications padho" to "notifications check karo", "Missed calls" to "missed call kitni hai",
-            "Gaana chalao" to "gaana chalao", "Alarm 7 baje" to "subah 7 baje ka alarm lagao", "Aaj ka mausam" to "aaj mausam kaisa hai"
+        listOf("Read notifications" to "notifications check karo", "Missed calls" to "missed call kitni hai",
+            "Play music" to "gaana chalao", "Alarm at 7 AM" to "subah 7 baje ka alarm lagao", "Today's weather" to "aaj mausam kaisa hai"
         ).forEach { (t, cmd) ->
             val ch = txt(t, 13f, Color.parseColor("#EDE9FE"), 400).apply {
                 setPadding(dp(15), dp(10), dp(15), dp(10))
@@ -448,44 +449,152 @@ class MainActivity : Activity(), LillyBus.Ui {
         chipsScroll.addView(chips)
         col.addView(chipsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10); leftMargin = -dp(20); rightMargin = -dp(20) })
 
-        // Live board: missed calls | messages
+        // Live board: 2 widget (lamba dabao = badlo)
+        widgets.clear()
         val two = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val (mc, mn, ms) = statCard("call", "Missed calls") {
-            if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
-                requestPermissions(arrayOf(Manifest.permission.READ_CALL_LOG), 77)
-            else runCommand("missed call kitni hai")
-        }
-        missedNum = mn; missedSub = ms
-        two.addView(mc, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { rightMargin = dp(5) })
-        val (gc, gn, gs) = statCard("chat", "New messages") {
-            if (!prefs.getBoolean("read_notifs", false) || !MediaCtl.allowed(this)) notifSetup() else runCommand("notifications check karo")
-        }
-        msgNum = gn; msgSub = gs
-        two.addView(gc, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { leftMargin = dp(5) })
+        two.addView(widgetCard("widget_left", "missed"), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { rightMargin = dp(5) })
+        two.addView(widgetCard("widget_right", "messages"), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { leftMargin = dp(5) })
         col.addView(two, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) })
 
         col.addView(nowPlayingCard(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) })
         return scrollPage(col)
     }
 
-    private fun statCard(icon: String, title: String, tap: () -> Unit): Triple<View, TextView, TextView> {
+    private fun widgetCard(pref: String, def: String): View {
         val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = glassBg(24, Color.argb(150, 18, 14, 30), Color.argb(36, 255, 255, 255))
             setPadding(dp(16), dp(14), dp(16), dp(14))
-            setOnClickListener { tap() }
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(IconView(this, icon, Ui.DIM, 1.8f), LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) })
-        head.addView(txt(title, 12f, Ui.DIM))
+        val ic = sym("call", 16f, Ui.DIM)
+        head.addView(ic, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { rightMargin = dp(6) })
+        val title = txt("", 12f, Ui.DIM).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        head.addView(title)
         c.addView(head)
-        val n = txt("–", 30f, Color.WHITE, 600).apply { letterSpacing = -0.03f; setPadding(0, dp(10), 0, dp(2)) }
+        val n = txt("–", 30f, Color.WHITE, 600).apply { letterSpacing = -0.03f; setPadding(0, dp(10), 0, dp(2)); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         c.addView(n)
         val s = txt("", 12f, Ui.MIST).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         c.addView(s)
+        val w = Widget(pref, def, c, ic, title, n, s)
+        widgets.add(w)
+        c.setOnClickListener { widgetTap(type(w)) }
+        c.setOnLongClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            chooseWidget(w); true
+        }
         pressable(c)
-        return Triple(c, n, s)
+        fillWidget(w)
+        return c
     }
+
+    private fun type(w: Widget) = prefs.getString(w.pref, w.def) ?: w.def
+
+    private fun chooseWidget(w: Widget) {
+        val cur = widgetTypes.indexOfFirst { it.first == type(w) }
+        AlertDialog.Builder(this)
+            .setTitle("Show in this widget")
+            .setSingleChoiceItems(widgetTypes.map { it.second }.toTypedArray(), cur) { d, which ->
+                prefs.edit().putString(w.pref, widgetTypes[which].first).apply()
+                d.dismiss()
+                fillWidget(w)
+                if (widgetTypes[which].first == "event" && checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
+            }.show()
+    }
+
+    private fun widgetTap(t: String) {
+        when (t) {
+            "missed" -> if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(Manifest.permission.READ_CALL_LOG), 77) else runCommand("missed call kitni hai")
+            "messages" -> if (!prefs.getBoolean("read_notifs", false) || !MediaCtl.allowed(this)) notifSetup() else runCommand("notifications check karo")
+            "alarm" -> tryStart(Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS))
+            "battery" -> tryStart(Intent(Intent.ACTION_POWER_USAGE_SUMMARY))
+            "event", "date" -> if (t == "event" && checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
+                else tryStart(Intent(Intent.ACTION_VIEW, Uri.parse("content://com.android.calendar/time/" + System.currentTimeMillis())))
+        }
+    }
+
+    private fun fillWidget(w: Widget) {
+        val t = type(w)
+        w.title.text = widgetTypes.firstOrNull { it.first == t }?.second ?: ""
+        w.icon.text = Ui.SYM[when (t) { "missed" -> "call"; "messages" -> "chat"; "alarm" -> "alarm"; "battery" -> "battery_full"; "event" -> "event"; else -> "today" }] ?: ""
+        w.num.textSize = 30f
+        when (t) {
+            "missed" -> if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED) {
+                val names = ArrayList<String>()
+                var n = 0
+                try {
+                    contentResolver.query(android.provider.CallLog.Calls.CONTENT_URI,
+                        arrayOf(android.provider.CallLog.Calls.CACHED_NAME, android.provider.CallLog.Calls.NUMBER),
+                        "${android.provider.CallLog.Calls.TYPE}=? AND ${android.provider.CallLog.Calls.DATE}>?",
+                        arrayOf(android.provider.CallLog.Calls.MISSED_TYPE.toString(), (System.currentTimeMillis() - 86_400_000L).toString()),
+                        android.provider.CallLog.Calls.DATE + " DESC")?.use { cur ->
+                        while (cur.moveToNext()) {
+                            n++
+                            val nm = (cur.getString(0)?.takeIf { it.isNotBlank() } ?: cur.getString(1) ?: "").split(" ").first()
+                            if (names.size < 3 && nm.isNotBlank() && nm !in names) names.add(nm)
+                        }
+                    }
+                } catch (e: Exception) { }
+                w.num.text = n.toString()
+                w.sub.text = if (n == 0) "None today" else names.joinToString(", ")
+            } else { w.num.text = "–"; w.sub.text = "Tap to allow" }
+            "messages" -> if (prefs.getBoolean("read_notifs", false) && MediaCtl.allowed(this)) {
+                val list = Inbox.recent("", 86_400_000L)
+                w.num.text = list.size.toString()
+                w.sub.text = if (list.isEmpty()) "All caught up" else list.map { it.app }.distinct().take(3).joinToString(", ")
+            } else { w.num.text = "–"; w.sub.text = "Tap to turn on" }
+            "alarm" -> {
+                val next = try { (getSystemService(ALARM_SERVICE) as android.app.AlarmManager).nextAlarmClock?.triggerTime } catch (e: Exception) { null }
+                if (next == null) { w.num.text = "Off"; w.sub.text = "No alarm set" }
+                else {
+                    w.num.text = android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(next))
+                    val days = ((next - startOfDay()) / 86_400_000L).toInt()
+                    w.sub.text = when (days) { 0 -> "Today"; 1 -> "Tomorrow"; else -> java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.ENGLISH).format(java.util.Date(next)) }
+                }
+            }
+            "battery" -> {
+                val i = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val lvl = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val sc = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+                val st = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                w.num.text = if (lvl >= 0) "${lvl * 100 / sc.coerceAtLeast(1)}%" else "–"
+                w.sub.text = when (st) {
+                    android.os.BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+                    android.os.BatteryManager.BATTERY_STATUS_FULL -> "Full"
+                    else -> "On battery"
+                }
+            }
+            "event" -> if (checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED) {
+                var title: String? = null; var at = 0L
+                try {
+                    val now = System.currentTimeMillis()
+                    val uri = android.provider.CalendarContract.Instances.CONTENT_URI.buildUpon()
+                    android.content.ContentUris.appendId(uri, now); android.content.ContentUris.appendId(uri, now + 7 * 86_400_000L)
+                    contentResolver.query(uri.build(), arrayOf(android.provider.CalendarContract.Instances.TITLE, android.provider.CalendarContract.Instances.BEGIN),
+                        "${android.provider.CalendarContract.Instances.BEGIN}>=?", arrayOf(now.toString()),
+                        android.provider.CalendarContract.Instances.BEGIN + " ASC")?.use { c -> if (c.moveToFirst()) { title = c.getString(0); at = c.getLong(1) } }
+                } catch (e: Exception) { }
+                if (title == null) { w.num.text = "Free"; w.sub.text = "Nothing this week" }
+                else {
+                    w.num.textSize = 19f
+                    w.num.text = title
+                    w.sub.text = java.text.SimpleDateFormat("EEE, h:mm a", java.util.Locale.ENGLISH).format(java.util.Date(at))
+                }
+            } else { w.num.text = "–"; w.sub.text = "Tap to allow calendar" }
+            else -> {
+                val d = java.util.Date()
+                w.num.text = java.text.SimpleDateFormat("d", java.util.Locale.ENGLISH).format(d)
+                w.sub.text = java.text.SimpleDateFormat("EEEE, MMM", java.util.Locale.ENGLISH).format(d)
+            }
+        }
+    }
+
+    private fun startOfDay(): Long = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
 
     private fun nowPlayingCard(): View {
         val c = LinearLayout(this).apply {
@@ -537,34 +646,8 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     /** Home ke live cards: missed calls, messages, chal raha gaana */
     private fun refreshLive() {
-        if (missedNum == null) return
-        // Missed calls (aaj ke 24 ghante)
-        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED) {
-            val names = ArrayList<String>()
-            var n = 0
-            try {
-                contentResolver.query(android.provider.CallLog.Calls.CONTENT_URI,
-                    arrayOf(android.provider.CallLog.Calls.CACHED_NAME, android.provider.CallLog.Calls.NUMBER),
-                    "${android.provider.CallLog.Calls.TYPE}=? AND ${android.provider.CallLog.Calls.DATE}>?",
-                    arrayOf(android.provider.CallLog.Calls.MISSED_TYPE.toString(), (System.currentTimeMillis() - 86_400_000L).toString()),
-                    android.provider.CallLog.Calls.DATE + " DESC")?.use { cur ->
-                    while (cur.moveToNext()) {
-                        n++
-                        val nm = cur.getString(0)?.takeIf { it.isNotBlank() } ?: cur.getString(1) ?: ""
-                        if (names.size < 3 && nm.isNotBlank() && nm !in names) names.add(nm.split(" ").first())
-                    }
-                }
-            } catch (e: Exception) { }
-            missedNum?.text = n.toString()
-            missedSub?.text = if (n == 0) "None today" else names.joinToString(", ")
-        } else { missedNum?.text = "–"; missedSub?.text = "Tap to allow" }
-        // Naye messages
-        if (prefs.getBoolean("read_notifs", false) && MediaCtl.allowed(this)) {
-            val list = Inbox.recent("", 86_400_000L)
-            msgNum?.text = list.size.toString()
-            val chats = list.map { it.title }.distinct().size
-            msgSub?.text = if (list.isEmpty()) "All caught up" else "${list.map { it.app }.distinct().take(2).joinToString(", ")} · $chats chats"
-        } else { msgNum?.text = "–"; msgSub?.text = "Tap to turn on" }
+        if (widgets.isEmpty()) return
+        widgets.forEach { fillWidget(it) }
         // Chal raha gaana
         val ctl = if (MediaCtl.allowed(this)) MediaCtl.current(this) else null
         val md = ctl?.metadata
@@ -575,13 +658,16 @@ class MainActivity : Activity(), LillyBus.Ui {
             npTitle?.text = title
             npSub?.text = listOf(artist, app).filter { it.isNotBlank() }.joinToString(" · ")
             val art = md!!.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART) ?: md.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
-            if (art != null) { npIcon?.setPadding(0, 0, 0, 0); npIcon?.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; npIcon?.clipToOutline = true; npIcon?.setImageBitmap(art) }
-            else { npIcon?.setPadding(dp(8), dp(8), dp(8), dp(8)); npIcon?.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE; npIcon?.setImageDrawable(appIcon(ctl.packageName)) }
+            if (art != null) { npIcon?.background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Color.BLACK) }; npIcon?.setPadding(0, 0, 0, 0); npIcon?.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; npIcon?.clipToOutline = true; npIcon?.setImageBitmap(art) }
+            else { npIcon?.background = null; npIcon?.setPadding(dp(2), dp(2), dp(2), dp(2)); npIcon?.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER; npIcon?.setImageDrawable(appIcon(ctl.packageName)) }
             npPlay?.set(if (ctl.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING) "pause" else "play")
         } else {
             npTitle?.text = "Nothing playing"
             npSub?.text = if (MediaCtl.allowed(this)) "Tap play or say “gaana chalao”" else "Tap to allow music control"
-            npIcon?.setPadding(dp(8), dp(8), dp(8), dp(8))
+            // Sirf Spotify ka logo — peeche ka rangin dabba nahi
+            npIcon?.background = null
+            npIcon?.setPadding(dp(2), dp(2), dp(2), dp(2))
+            npIcon?.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
             npIcon?.setImageDrawable(appIcon("com.spotify.music"))
             npPlay?.set("play")
         }
@@ -2611,7 +2697,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         orb.state = LillyBus.lastOrb
         onRunning(LillyBus.running)
         refreshCards()
-        if (missedNum != null) { live.removeCallbacks(liveTick); live.postDelayed(liveTick, 2500) }
+        if (widgets.isNotEmpty()) { live.removeCallbacks(liveTick); live.postDelayed(liveTick, 2500) }
         if (hasMic() && prefs.getBoolean("enabled", true) && !LillyBus.running) startEngine()
         if (missingPermissions().isEmpty()) {
             askSpecialPermissions()
