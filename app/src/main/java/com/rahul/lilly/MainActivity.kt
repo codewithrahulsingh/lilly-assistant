@@ -53,6 +53,7 @@ class MainActivity : Activity(), LillyBus.Ui {
     private lateinit var spotifyConnValue: TextView
     private lateinit var mediaCtlValue: TextView
     private lateinit var headValue: TextView
+    private lateinit var smartValue: TextView
 
     private val prefs by lazy { getSharedPreferences("lilly", MODE_PRIVATE) }
     private var setupShown = false
@@ -246,6 +247,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         spotifyConnValue = card(r15, "🟢", "Connect Spotify") { connectSpotify() }
         card(r15, "🎧", "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
 
+        val r18 = row(col)
+        smartValue = card(r18, "✍️", "Smart listening") { smartSetup() }
+
         val r17 = row(col)
         headValue = card(r17, "🎧", "Headphone mode") { headphoneSetup() }
         card(r17, "💬", "Reply without opening") { replyHelp() }.text = "WhatsApp & more"
@@ -298,6 +302,7 @@ class MainActivity : Activity(), LillyBus.Ui {
         val nf = mem.facts().size
         val na = mem.answerCount()
         memoryValue.text = if (nf == 0 && na == 0) "Nothing yet — tap to see how" else "$nf things about you · $na saved answers"
+        smartValue.text = if (prefs.getBoolean("smart_listen", true)) "ON ✓ writes exactly what you say" else "OFF — phone's own recognizer"
         headValue.text = when {
             !prefs.getBoolean("headphone_mode", true) -> "OFF"
             prefs.getBoolean("headphone_music", false) -> "ON ✓ plays music when plugged in"
@@ -1534,6 +1539,23 @@ class MainActivity : Activity(), LillyBus.Ui {
                 }
             }
         }.start()
+    }
+
+    private fun smartSetup() {
+        val on = prefs.getBoolean("smart_listen", true)
+        AlertDialog.Builder(this).setTitle("✍️ Smart listening")
+            .setMessage(
+                "ON: Lilly records your command and Gemini writes it exactly — correct Hinglish in English letters " +
+                    "(\"missed call\", \"WiFi\", \"notifications check karo\") and your contacts' names spelled right.\n\n" +
+                    "• Uses your free Gemini key, adds about 1 second\n" +
+                    "• No internet / free limit over → Lilly automatically uses the phone's normal recognizer\n" +
+                    "• Your command audio goes to Google (as it does with the normal recognizer too)\n\n" +
+                    "It's ${if (on) "ON" else "OFF"} now."
+            )
+            .setPositiveButton(if (on) "Turn off" else "Turn on") { _, _ ->
+                prefs.edit().putBoolean("smart_listen", !on).apply(); refreshCards()
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     private fun headphoneSetup() {

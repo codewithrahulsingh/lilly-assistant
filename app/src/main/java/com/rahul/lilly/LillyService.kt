@@ -825,6 +825,7 @@ class LillyService : Service() {
             prefetchVoice() // roz ki lines dheere-dheere pakki awaaz me save
         }
         if (mode == Mode.STOPPED && !started) return
+        SmartEar.stop()
         if (micPaused) { mode = Mode.WAKE; return }
         if (newMode == Mode.WAKE && voskModel != null) {
             handler.removeCallbacks(wakeRunnable)
@@ -837,6 +838,7 @@ class LillyService : Service() {
             return
         }
         stopVosk()
+        if (newMode == Mode.COMMAND && smartOn()) { startSmart(); return }
         val r = ensureRecognizer() ?: return
         handler.removeCallbacks(wakeRunnable)
         mode = newMode
@@ -856,6 +858,50 @@ class LillyService : Service() {
             muteBeep(false)
             restartLater(800)
         }
+    }
+
+    /** Smart listening: Gemini se sahi Hinglish (key + internet ho, aur band na kiya ho) */
+    private fun smartOn(): Boolean {
+        if (!prefs.getBoolean("smart_listen", true) || !SmartEar.available() || !online()) return false
+        val k = (prefs.getString("ai_key", "") ?: "").trim()
+        return k.isNotBlank() && !k.startsWith("sk-ant-")
+    }
+
+    private fun startSmart() {
+        handler.removeCallbacks(wakeRunnable)
+        try { recognizer?.cancel() } catch (e: Exception) { }
+        mode = Mode.COMMAND
+        LillyBus.orb(OrbView.State.LISTENING)
+        LillyBus.status("Listening…")
+        lastEvent = System.currentTimeMillis()
+        SmartEar.record(
+            level = { lastEvent = System.currentTimeMillis(); if (mode == Mode.COMMAND) LillyBus.level(it) },
+            started = { heardAny = true; lastEvent = System.currentTimeMillis() },
+            done = done@{ pcm ->
+                lastEvent = System.currentTimeMillis()
+                if (mode != Mode.COMMAND) return@done
+                if (pcm == null) { listener.onError(SpeechRecognizer.ERROR_SPEECH_TIMEOUT); return@done }
+                LillyBus.status("Understanding…")
+                val key = (prefs.getString("ai_key", "") ?: "").filter { !it.isWhitespace() }
+                val app = applicationContext
+                Thread {
+                    val text = SmartEar.transcribe(app, key, pcm)
+                    handler.post {
+                        lastEvent = System.currentTimeMillis()
+                        if (mode != Mode.COMMAND) return@post
+                        when {
+                            // Gemini nahi chala (limit / internet) — Google recognizer se dobara suno
+                            text == null -> sayBi("Sorry, say that again", "माफ़ कीजिए, फिर से बोलिए") { listen(Mode.COMMAND) }
+                            text.isBlank() -> listener.onError(SpeechRecognizer.ERROR_NO_MATCH)
+                            else -> {
+                                choiceWaits = 0
+                                LillyBus.heard(text)
+                                handleResults(listOf(text))
+                            }
+                        }
+                    }
+                }.start()
+            })
     }
 
     private fun restartLater(delay: Long = 250) {
@@ -1317,6 +1363,7 @@ class LillyService : Service() {
         recognizer = null
         headphoneCb?.let { try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(it) } catch (e: Exception) { } }
         headphoneCb = null
+        SmartEar.stop()
         realVoice.stop()
         OfflineVoice.stop()
         tts?.stop()
