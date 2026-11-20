@@ -1182,9 +1182,37 @@ class LillyService : Service() {
                 continueChat()
             }
         }
+        // List padhte waqt beech me "teen" bolo toh turant (Siri jaisa)
+        val choice = !reply.endChat && reply.action == null && brain.awaitingChoice() && prefs.getBoolean("barge_in", true)
+        val then2: () -> Unit = if (choice) ({ stopBarge(); then() }) else then
         // English me chhota bolne wala roop ho (lambi list screen par, bolna chhota)
         val en = reply.spokenEn
-        if (english && en != null) say(reply.display, en, then) else sayBi(reply.display, reply.spoken, then)
+        if (english && en != null) say(reply.display, en, then2) else sayBi(reply.display, reply.spoken, then2)
+        if (choice) handler.postDelayed({ if (mode == Mode.SPEAKING) startBarge() }, 400)
+    }
+
+    private var barge: BargeIn? = null
+
+    private fun startBarge() {
+        val m = voskModel ?: return
+        stopBarge()
+        barge = BargeIn(m) { n ->
+            barge = null
+            if (mode != Mode.SPEAKING || !brain.awaitingChoice()) return@BargeIn
+            // Lilly ko beech me roko aur wahi number chuno
+            currentUtterance = null
+            handler.removeCallbacks(speakTimeout)
+            try { realVoice.stop() } catch (e: Exception) { }
+            try { OfflineVoice.stop() } catch (e: Exception) { }
+            try { tts?.stop() } catch (e: Exception) { }
+            LillyBus.heard("“$n”")
+            tapAnswer(n.toString())
+        }.also { it.start() }
+    }
+
+    private fun stopBarge() {
+        barge?.stop()
+        barge = null
     }
 
     private fun continueChat() {
@@ -1402,6 +1430,7 @@ class LillyService : Service() {
         headphoneCb?.let { try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(it) } catch (e: Exception) { } }
         headphoneCb = null
         SmartEar.stop()
+        stopBarge()
         realVoice.stop()
         OfflineVoice.stop()
         tts?.stop()

@@ -162,7 +162,14 @@ object CallChoice {
         "to" to "2", "too" to "2", "tu" to "2", "doe" to "2", "dough" to "2",
         "tin" to "3", "tean" to "3", "teen" to "3", "tree" to "3", "free" to "3",
         "for" to "4", "car" to "4", "char" to "4", "chart" to "4",
-        "punch" to "5", "pants" to "5", "bunch" to "5", "fife" to "5"
+        "punch" to "5", "pants" to "5", "bunch" to "5", "fife" to "5",
+        // Hindi recognizer English ginti ko aise likhta hai
+        "farst" to "1", "frist" to "1", "fast" to "1", "fust" to "1", "ferst" to "1", "firs" to "1", "fist" to "1", "farest" to "1", "phirst" to "1", "pharst" to "1",
+        "sekand" to "2", "secand" to "2", "sekind" to "2", "sacond" to "2", "sekend" to "2", "seckand" to "2", "sakend" to "2", "segund" to "2",
+        "thard" to "3", "tird" to "3", "thurd" to "3", "tard" to "3", "therd" to "3", "thurad" to "3",
+        "forth" to "4", "fort" to "4", "forthe" to "4", "foth" to "4",
+        "fift" to "5", "fif" to "5", "fiveth" to "5", "fipth" to "5",
+        "van" to "1", "vun" to "1", "tu" to "2", "thri" to "3", "tri" to "3", "faiv" to "5", "faive" to "5", "fore" to "4"
     )
 
     fun pick(answerRaw: String, options: List<Phone>, byName: Boolean): Int? {
@@ -170,6 +177,8 @@ object CallChoice {
         var t = Parser.normalize(answerRaw).replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
         val ws = t.split(" ").filter { it.isNotBlank() && it !in setOf("number", "no", "num", "wala", "vala", "wale", "please", "the") }
         if (ws.size == 1) misheardNums[ws[0]]?.let { t = it }
+        // "farst one" / "number farst" — chhote jawab me har shabd sudharo
+        else if (ws.size in 2..3) t = ws.joinToString(" ") { w -> misheardNums[w]?.takeIf { w !in setOf("to", "for", "do") } ?: w }
         if (t.isBlank()) return null
         val words = t.split(" ")
         val short = words.size <= 3

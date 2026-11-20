@@ -943,6 +943,6 @@ class ChoiceHearingTest {
     @org.junit.Test fun numbers() {
         val o = listOf("Abhishek Badiyasar", "Abhishek X", "Abhishek Balesra", "Abhishek Bhaiya", "Abhishek Bpt").mapIndexed { i, n -> CallChoice.Phone(n, "98765432${10 + i}", "Mobile", false) }
         val eq = { t: String, i: Int -> org.junit.Assert.assertEquals(t, i, CallChoice.pick(Parser.roman(t), o, true)) }
-        eq("ek", 0); eq("egg", 0); eq("do", 1); eq("to", 1); eq("teen", 2); eq("tin", 2); eq("तीन", 2); eq("number 3", 2); eq("pehla", 0); eq("punch", 4)
+        eq("farst", 0); eq("फर्स्ट", 0); eq("sekand", 1); eq("thard", 2); eq("ek", 0); eq("egg", 0); eq("do", 1); eq("to", 1); eq("teen", 2); eq("tin", 2); eq("तीन", 2); eq("number 3", 2); eq("pehla", 0); eq("punch", 4)
     }
 }

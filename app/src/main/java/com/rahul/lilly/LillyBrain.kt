@@ -1372,8 +1372,21 @@ class LillyBrain(private val ctx: Context) {
     private fun askChoice(pc: PendingCall): Reply {
         val card = showChoiceCard(pc)
         val r = askChoiceText(pc)
-        // Card dikh raha hai toh neeche lambi list dobara mat likho — bolna wahi
-        return if (card) r.copy(display = r.display.lines().first() + "\nSay a number, or tap one above.") else r
+        if (!card) return r
+        // Card par number dikh rahe hain — bolte waqt sirf naam (taaki beech me aapka "teen" Lilly ki apni awaaz se na mile)
+        val o = pc.options
+        val from = if (pc.byName && o.size > 3) pc.page * PAGE else 0
+        val page = if (pc.byName && o.size > 3) o.subList(from, minOf(from + PAGE, o.size)) else o
+        val names = if (pc.byName) CallChoice.shortNames(o).subList(from, from + page.size) else page.map { it.label.ifBlank { "number" } }
+        val left = o.size - (from + page.size)
+        val who = CallChoice.speakName(if (pc.byName) pc.target else o.first().name)
+        val headEn = if (pc.page == 0) (if (pc.byName) "${o.size} ${who}s. " else "$who has ${o.size} numbers. ") else ""
+        val headHi = if (pc.page == 0) (if (pc.byName) "$who नाम के ${o.size} कॉन्टैक्ट हैं। " else "$who के ${o.size} नंबर हैं। ") else ""
+        return r.copy(
+            display = r.display.lines().first() + "\nSay a number, or tap one above.",
+            spoken = headHi + names.joinToString(", ") + "। " + (if (left > 0) "नंबर बोलिए, या और" else "नंबर बोलिए"),
+            spokenEn = headEn + names.joinToString(", ") + ". " + (if (left > 0) "Say a number, or more." else "Say a number.")
+        )
     }
 
     private fun askChoiceText(pc: PendingCall): Reply {
