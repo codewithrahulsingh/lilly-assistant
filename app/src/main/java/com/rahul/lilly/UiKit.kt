@@ -29,6 +29,24 @@ object Ui {
     val EDGE = Color.argb(30, 255, 255, 255)
 
     private val cache = HashMap<Int, Typeface>()
+    @Volatile private var iconFont: Typeface? = null
+
+    /** Google Material icons (gol kone wale) — naam se */
+    val SYM = mapOf(
+        "home" to "\ue88a", "tune" to "\ue429", "mic" to "\ue029", "record_voice_over" to "\ue91f", "play_circle" to "\ue1c4",
+        "download" to "\uf090", "hearing" to "\ue023", "translate" to "\ue8e2", "science" to "\uea4b", "spellcheck" to "\ue8ce",
+        "music_note" to "\ue405", "graphic_eq" to "\ue1b8", "headphones" to "\uf01f", "help" to "\ue887", "notifications" to "\ue7f4",
+        "keyboard" to "\ue312", "lock" to "\ue897", "credit_card" to "\ue870", "bolt" to "\uea0b", "place" to "\ue55f",
+        "check_circle" to "\ue86c", "smart_toy" to "\uf06c", "auto_awesome" to "\ue65f", "power" to "\ue63c", "psychology" to "\uea4a",
+        "smartphone" to "\ue32c", "lock_open" to "\ue898", "battery_charging_full" to "\ue1a3", "notifications_off" to "\ue7f6",
+        "lightbulb" to "\ue0f0", "wifi_off" to "\ue648", "shield" to "\ue9e0", "system_update" to "\ue62a", "palette" to "\ue40a",
+        "fingerprint" to "\ue90d", "edit_note" to "\ue745", "sentiment_very_dissatisfied" to "\ue814", "call" to "\ue0b0",
+        "chat" to "\ue0b7", "queue_music" to "\ue03d", "touch_app" to "\ue913"
+    )
+
+    fun icons(ctx: Context): Typeface = iconFont ?: try {
+        Typeface.createFromAsset(ctx.assets, "fonts/MaterialIconsRound-Regular.otf")
+    } catch (e: Exception) { Typeface.DEFAULT }.also { iconFont = it }
 
     /** Sora font, wajan ke saath (300 halka, 400, 500, 600 mota) */
     fun font(ctx: Context, weight: Int): Typeface = cache.getOrPut(weight) {

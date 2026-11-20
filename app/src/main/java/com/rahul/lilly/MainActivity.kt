@@ -309,6 +309,25 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     private fun tf(w: Int) = Ui.font(this, w)
 
+    /** Material icon (naam se) */
+    private fun sym(name: String, size: Float, color: Int) = TextView(this).apply {
+        text = Ui.SYM[name] ?: ""
+        typeface = Ui.icons(this@MainActivity)
+        textSize = size; setTextColor(color); gravity = Gravity.CENTER; includeFontPadding = false
+    }
+
+    /** App jaisa icon: rang bhara gol-kona squircle + safed nishaan */
+    private fun appTile(name: String, tint: Int, sizeDp: Int): View {
+        val hsv = FloatArray(3); Color.colorToHSV(tint, hsv)
+        val light = Color.HSVToColor(floatArrayOf(hsv[0], (hsv[1] * 0.75f), minOf(1f, hsv[2] * 1.3f + 0.1f)))
+        return sym(name, sizeDp * 0.56f, Color.WHITE).apply {
+            background = android.graphics.drawable.LayerDrawable(arrayOf(
+                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(light, tint)).apply { cornerRadius = dp(sizeDp) * 0.28f },
+                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(50, 255, 255, 255), Color.TRANSPARENT)).apply { cornerRadius = dp(sizeDp) * 0.28f }
+            )).apply { setLayerInset(1, 0, 0, 0, dp(sizeDp) / 2) }
+        }
+    }
+
     private fun txt(text: String, size: Float, color: Int, weight: Int = 400) = TextView(this).apply {
         this.text = text; textSize = size; setTextColor(color); typeface = tf(weight)
         includeFontPadding = false
@@ -343,6 +362,12 @@ class MainActivity : Activity(), LillyBus.Ui {
         switchBinds.clear(); tileBinds.clear()
         pages = listOf(homePage(), settingsPage())
         pages.forEach { holder.addView(it, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)) }
+        // Neeche dhundhla parda: scroll hota content dock ke peeche dheere gayab ho
+        root.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(Color.argb(250, 7, 4, 15), Color.argb(200, 7, 4, 15), Color.argb(0, 7, 4, 15)))
+            isClickable = false
+        }, android.widget.FrameLayout.LayoutParams(MATCH_PARENT, dp(124), Gravity.BOTTOM))
         root.addView(dock(), android.widget.FrameLayout.LayoutParams(MATCH_PARENT, dp(72)).apply {
             gravity = Gravity.BOTTOM
             setMargins(dp(22), 0, dp(22), dp(18))
@@ -402,7 +427,12 @@ class MainActivity : Activity(), LillyBus.Ui {
         col.addView(orb, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(4); bottomMargin = dp(4) })
 
         // Bolne layak baatein (dabao = jaise boli)
-        val chipsScroll = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER }
+        val chipsScroll = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER
+            // Kinaron par dhundhla ho kar gayab (kat-te nahi)
+            isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(dp(28))
+            clipToPadding = false; setPadding(dp(20), 0, dp(20), 0)
+        }
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("Notifications padho" to "notifications check karo", "Missed calls" to "missed call kitni hai",
             "Gaana chalao" to "gaana chalao", "Alarm 7 baje" to "subah 7 baje ka alarm lagao", "Aaj ka mausam" to "aaj mausam kaisa hai"
@@ -416,7 +446,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             chips.addView(ch, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { rightMargin = dp(8) })
         }
         chipsScroll.addView(chips)
-        col.addView(chipsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) })
+        col.addView(chipsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10); leftMargin = -dp(20); rightMargin = -dp(20) })
 
         // Live board: missed calls | messages
         val two = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -581,46 +611,38 @@ class MainActivity : Activity(), LillyBus.Ui {
 
     // ---------------- Dock ----------------
 
-    private var dockHomeLabel: TextView? = null
-    private var dockGearLabel: TextView? = null
-    private var dockHomeBox: View? = null
-    private var dockGearBox: View? = null
+    private var dockHomeBox: TextView? = null
+    private var dockGearBox: TextView? = null
+    private var dockOrb: OrbView? = null
 
     private fun dock(): View {
         val bar = android.widget.FrameLayout(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.argb(200, 38, 24, 70), Color.argb(225, 20, 12, 40))).apply {
+                intArrayOf(Color.argb(200, 38, 24, 70), Color.argb(230, 20, 12, 40))).apply {
                 cornerRadius = dp(36).toFloat(); setStroke(dp(1), Color.argb(55, 216, 180, 254))
             }
             elevation = dp(10).toFloat()
         }
-        fun tab(kind: String, label: String, gravity: Int, tap: () -> Unit): Triple<View, IconView, TextView> {
-            val box = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; this.gravity = Gravity.CENTER
-                setPadding(dp(18), dp(6), dp(18), dp(6))
-                setOnClickListener { tap() }
-            }
-            val ic = IconView(this, kind, Color.WHITE, 1.7f)
-            box.addView(ic, LinearLayout.LayoutParams(dp(24), dp(24)))
-            val tx = txt(label, 10.5f, Color.WHITE, 500).apply { setPadding(0, dp(4), 0, 0) }
-            box.addView(tx)
-            bar.addView(box, android.widget.FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, gravity or Gravity.CENTER_VERTICAL).apply {
-                if (gravity == Gravity.START) leftMargin = dp(18) else rightMargin = dp(18)
+        fun tab(name: String, g: Int, tap: () -> Unit) = sym(name, 27f, Color.WHITE).apply {
+            setOnClickListener { tap() }
+        }.also {
+            bar.addView(it, android.widget.FrameLayout.LayoutParams(dp(64), dp(48), g or Gravity.CENTER_VERTICAL).apply {
+                if (g == Gravity.START) leftMargin = dp(24) else rightMargin = dp(24)
             })
-            return Triple(box, ic, tx)
         }
-        val (hb, hi, ht) = tab("home", "Home", Gravity.START) { showTab(0) }
-        val (gb, gi, gt) = tab("sliders", "Settings", Gravity.END) { showTab(1) }
-        dockHomeBox = hb; dockHome = hi; dockHomeLabel = ht
-        dockGearBox = gb; dockGear = gi; dockGearLabel = gt
-        val mic = MicButton(this).apply {
+        dockHomeBox = tab("home", Gravity.START) { showTab(0) }
+        dockGearBox = tab("tune", Gravity.END) { showTab(1) }
+        // Beech me wahi ghoomta orb (upar wale jaisa) — dabao = Lilly sune
+        dockOrb = OrbView(this).apply {
+            contentDescription = "Talk to Lilly"
             setOnClickListener {
                 performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                 showTab(0); sendToEngine(LillyService.ACTION_ACTIVATE)
             }
         }
-        pressable(mic)
-        bar.addView(mic, android.widget.FrameLayout.LayoutParams(dp(78), dp(78), Gravity.CENTER))
+        pressable(dockOrb!!)
+        bar.addView(dockOrb, android.widget.FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
+        bar.clipChildren = false
         return bar
     }
 
@@ -634,11 +656,9 @@ class MainActivity : Activity(), LillyBus.Ui {
                 if (animate && changed) { p.alpha = 0f; p.animate().alpha(1f).setDuration(180).start() }
             } else p.visibility = View.GONE
         }
-        dockHome?.apply { color = if (i == 0) Color.WHITE else Ui.DIM; invalidate() }
-        dockGear?.apply { color = if (i == 1) Color.WHITE else Ui.DIM; invalidate() }
-        dockHomeLabel?.setTextColor(if (i == 0) Color.WHITE else Ui.DIM)
-        dockGearLabel?.setTextColor(if (i == 1) Color.WHITE else Ui.DIM)
-        val pillOn = { GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(Color.argb(34, 255, 255, 255)) } }
+        dockHomeBox?.setTextColor(if (i == 0) Color.WHITE else Ui.DIM)
+        dockGearBox?.setTextColor(if (i == 1) Color.WHITE else Ui.DIM)
+        val pillOn = { GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(Color.argb(34, 255, 255, 255)) } }
         dockHomeBox?.background = if (i == 0) pillOn() else null
         dockGearBox?.background = if (i == 1) pillOn() else null
         if (animate && changed) window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
@@ -689,12 +709,9 @@ class MainActivity : Activity(), LillyBus.Ui {
         }
         val pkgIcon = if (icon.contains('.')) appIcon(icon) else null
         if (pkgIcon != null) {
-            r.addView(android.widget.ImageView(this).apply { setImageDrawable(pkgIcon) }, LinearLayout.LayoutParams(dp(32), dp(32)))
+            r.addView(android.widget.ImageView(this).apply { setImageDrawable(pkgIcon) }, LinearLayout.LayoutParams(dp(38), dp(38)))
         } else {
-            r.addView(txt(if (icon.contains('.')) "♪" else icon, 15f, Color.WHITE).apply {
-                gravity = Gravity.CENTER
-                background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(tint) }
-            }, LinearLayout.LayoutParams(dp(32), dp(32)))
+            r.addView(appTile(if (icon.contains('.')) "queue_music" else icon, tint, 38), LinearLayout.LayoutParams(dp(38), dp(38)))
         }
         val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(10), 0) }
         texts.addView(txt(title, 14.5f, Color.WHITE))
@@ -718,7 +735,7 @@ class MainActivity : Activity(), LillyBus.Ui {
             setOnClickListener { onTap() }
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(txt(icon, 18f, Color.WHITE), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        head.addView(sym(icon, 26f, Color.WHITE).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         val sw = GlowSwitch(this, state()) { on -> set(on); refreshCards() }
         switchBinds.add(sw to state)
         head.addView(sw)
@@ -750,68 +767,68 @@ class MainActivity : Activity(), LillyBus.Ui {
         val r2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         col.addView(r1, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { leftMargin = -dp(5); rightMargin = -dp(5) })
         col.addView(r2, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { leftMargin = -dp(5); rightMargin = -dp(5) })
-        matchValue = tile(r1, "🔐", "Only my voice", { VoiceMatch.active(this) }, { on ->
+        matchValue = tile(r1, "fingerprint", "Only my voice", { VoiceMatch.active(this) }, { on ->
             if (on && !(VoiceMatch.voicePrint(this).ready && VoiceMatch.modelReady(this))) voiceMatchSetup()
             else VoiceMatch.setOn(this, on)
         }) { voiceMatchSetup() }
         val (sg, ss) = flip("smart_listen", true)
-        smartValue = tile(r1, "✍️", "Smart listening", sg, ss) { smartSetup() }
+        smartValue = tile(r1, "hearing", "Smart listening", sg, ss) { smartSetup() }
         val (ag, aset) = flip("abuse_mode", false)
-        abuseValue = tile(r2, "🤬", "Gaali mode", ag, aset) { abuseSetup() }
-        headValue = tile(r2, "🎧", "Headphone mode", { prefs.getBoolean("headphone_mode", true) },
+        abuseValue = tile(r2, "sentiment_very_dissatisfied", "Gaali mode", ag, aset) { abuseSetup() }
+        headValue = tile(r2, "headphones", "Headphone mode", { prefs.getBoolean("headphone_mode", true) },
             { on -> prefs.edit().putBoolean("headphone_mode", on).apply() }) { headphoneSetup() }
 
         val v = group(col, "Voice")
-        realValue = item(v, "🎤", Color.parseColor("#6D28D9"), "Lilly's voice") { chooseRealVoice() }
-        item(v, "▶️", Color.parseColor("#7C3AED"), "Hear voice") { sendToEngine(LillyService.ACTION_TEST_VOICE) }.text = "Test the current voice"
-        voiceValue = item(v, "⬇️", Color.parseColor("#4C1D95"), "Natural voice pack") { downloadVoice() }
-        wakeValue = item(v, "👂", Color.parseColor("#7C3AED"), "Wake-up sensitivity") { chooseSensitivity() }
-        langValue = item(v, "🗣", Color.parseColor("#9333EA"), "Listening language") { chooseLanguage() }
-        item(v, "🧪", Color.parseColor("#5B21B6"), "Test voice match") { testVoiceMatch() }.text = "Say \"Lilly\" and see the score"
-        item(v, "📖", Color.parseColor("#6D28D9"), "My spellings") { showSpellings() }.text = "Lilly learns & fixes words"
+        realValue = item(v, "record_voice_over", Color.parseColor("#6D28D9"), "Lilly's voice") { chooseRealVoice() }
+        item(v, "play_circle", Color.parseColor("#7C3AED"), "Hear voice") { sendToEngine(LillyService.ACTION_TEST_VOICE) }.text = "Test the current voice"
+        voiceValue = item(v, "download", Color.parseColor("#4C1D95"), "Natural voice pack") { downloadVoice() }
+        wakeValue = item(v, "hearing", Color.parseColor("#7C3AED"), "Wake-up sensitivity") { chooseSensitivity() }
+        langValue = item(v, "translate", Color.parseColor("#9333EA"), "Listening language") { chooseLanguage() }
+        item(v, "science", Color.parseColor("#5B21B6"), "Test voice match") { testVoiceMatch() }.text = "Say \"Lilly\" and see the score"
+        item(v, "spellcheck", Color.parseColor("#6D28D9"), "My spellings") { showSpellings() }.text = "Lilly learns & fixes words"
 
         val m = group(col, "Music")
         spotifyConnValue = item(m, "com.spotify.music", Color.parseColor("#15803D"), "Spotify") { connectSpotify() }
         val musicPkg = musicApps.firstOrNull { it.first == (prefs.getString("music_app", "") ?: "") }?.third ?: ""
-        musicValue = item(m, musicPkg.ifBlank { "🎵" }, Color.parseColor("#16A34A"), "Music app") { chooseMusicApp() }
-        mediaCtlValue = item(m, "🎛", Color.parseColor("#0F766E"), "Music control") { mediaCtlSetup() }
-        item(m, "🎶", Color.parseColor("#166534"), "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
-        item(m, "❓", Color.parseColor("#334155"), "Which apps play by voice") { musicHelp() }.text = "No helper needed"
+        musicValue = item(m, musicPkg.ifBlank { "queue_music" }, Color.parseColor("#16A34A"), "Music app") { chooseMusicApp() }
+        mediaCtlValue = item(m, "graphic_eq", Color.parseColor("#0F766E"), "Music control") { mediaCtlSetup() }
+        item(m, "music_note", Color.parseColor("#166534"), "Test Spotify play") { testSpotifyPlay() }.text = "Plays Kesariya"
+        item(m, "help", Color.parseColor("#334155"), "Which apps play by voice") { musicHelp() }.text = "No helper needed"
 
         val c = group(col, "Calls & messages")
         val (ng, nset) = flip("read_notifs", false)
-        notifValue = item(c, "🔔", Color.parseColor("#2563EB"), "Read my notifications", ng to { on: Boolean ->
+        notifValue = item(c, "notifications", Color.parseColor("#2563EB"), "Read my notifications", ng to { on: Boolean ->
             nset(on); if (on && !MediaCtl.allowed(this)) notifSetup()
         }) { notifSetup() }
         item(c, "com.whatsapp", Color.parseColor("#15803D"), "Reply without opening") { replyHelp() }.text = "WhatsApp & more"
-        scriptValue = item(c, "⌨️", Color.parseColor("#1D4ED8"), "WhatsApp typing") { chooseScript() }
-        lockValue = item(c, "🔒", Color.parseColor("#1E40AF"), "Lock screen call") { chooseLockMode() }
-        upiValue = item(c, "💳", Color.parseColor("#D97706"), "UPI contacts") { upiSetup() }
+        scriptValue = item(c, "keyboard", Color.parseColor("#1D4ED8"), "WhatsApp typing") { chooseScript() }
+        lockValue = item(c, "lock", Color.parseColor("#1E40AF"), "Lock screen call") { chooseLockMode() }
+        upiValue = item(c, "credit_card", Color.parseColor("#D97706"), "UPI contacts") { upiSetup() }
 
         val a = group(col, "Automation")
-        routinesValue = item(a, "⚡", Color.parseColor("#D97706"), "Routines & habits") { routinesSetup() }
-        placesValue = item(a, "📍", Color.parseColor("#B45309"), "Home, office & city") { showPlaces() }
-        allowedValue = item(a, "✅", Color.parseColor("#15803D"), "Apps Lilly can open") { chooseApps() }
-        spotifyValue = item(a, "🤖", Color.parseColor("#475569"), "Lilly helper") { spotifySetup() }
+        routinesValue = item(a, "bolt", Color.parseColor("#D97706"), "Routines & habits") { routinesSetup() }
+        placesValue = item(a, "place", Color.parseColor("#B45309"), "Home, office & city") { showPlaces() }
+        allowedValue = item(a, "check_circle", Color.parseColor("#15803D"), "Apps Lilly can open") { chooseApps() }
+        spotifyValue = item(a, "smart_toy", Color.parseColor("#475569"), "Lilly helper") { spotifySetup() }
 
         val ai = group(col, "AI & memory")
-        aiValue = item(ai, "✨", Color.parseColor("#BE185D"), "AI chat") { aiSetup() }
-        ai2Value = item(ai, "🔌", Color.parseColor("#9D174D"), "Second AI") { ai2Setup() }
-        memoryValue = item(ai, "📒", Color.parseColor("#DB2777"), "What Lilly remembers") { showMemory() }
-        learnedValue = item(ai, "🧠", Color.parseColor("#A21CAF"), "What Lilly learned") { showLearned() }
+        aiValue = item(ai, "auto_awesome", Color.parseColor("#BE185D"), "AI chat") { aiSetup() }
+        ai2Value = item(ai, "power", Color.parseColor("#9D174D"), "Second AI") { ai2Setup() }
+        memoryValue = item(ai, "edit_note", Color.parseColor("#DB2777"), "What Lilly remembers") { showMemory() }
+        learnedValue = item(ai, "psychology", Color.parseColor("#A21CAF"), "What Lilly learned") { showLearned() }
 
         val p = group(col, "Phone & permissions")
-        appsValue = item(p, "📱", Color.parseColor("#334155"), "Orb on every screen + apps") { appsAnywhere() }
-        lockPopupValue = item(p, "🔓", Color.parseColor("#334155"), "Orb on lock screen") { lockPopupSetup() }
-        batteryValue = item(p, "🔋", Color.parseColor("#334155"), "Run in background") { batterySettings() }
-        item(p, "🔕", Color.parseColor("#334155"), "Hide notification") { hideNotification() }.text = "Tap to turn it off"
+        appsValue = item(p, "smartphone", Color.parseColor("#334155"), "Orb on every screen + apps") { appsAnywhere() }
+        lockPopupValue = item(p, "lock_open", Color.parseColor("#334155"), "Orb on lock screen") { lockPopupSetup() }
+        batteryValue = item(p, "battery_charging_full", Color.parseColor("#334155"), "Run in background") { batterySettings() }
+        item(p, "notifications_off", Color.parseColor("#334155"), "Hide notification") { hideNotification() }.text = "Tap to turn it off"
 
         val h = group(col, "Help")
-        item(h, "💡", Color.parseColor("#7C3AED"), "What you can say") { showHelp() }.text = "All commands"
-        item(h, "📴", Color.parseColor("#475569"), "Use without internet") { offlineHelp() }.text = "What works offline + setup"
-        item(h, "🛡", Color.parseColor("#0369A1"), "Security") { showSecurity() }.text = "How safe Lilly is"
-        updateValue = item(h, "⬆️", Color.parseColor("#6D28D9"), "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
-        item(h, "🎨", Color.parseColor("#9333EA"), "Design") { chooseDesign() }.text = "New — tap to go back to the old look"
+        item(h, "lightbulb", Color.parseColor("#7C3AED"), "What you can say") { showHelp() }.text = "All commands"
+        item(h, "wifi_off", Color.parseColor("#475569"), "Use without internet") { offlineHelp() }.text = "What works offline + setup"
+        item(h, "shield", Color.parseColor("#0369A1"), "Security") { showSecurity() }.text = "How safe Lilly is"
+        updateValue = item(h, "system_update", Color.parseColor("#6D28D9"), "Update Lilly") { Updater.check(this, userAsked = true) { refreshCards() } }
+        item(h, "palette", Color.parseColor("#9333EA"), "Design") { chooseDesign() }.text = "New — tap to go back to the old look"
 
         val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "" }
         col.addView(txt("Lilly $ver", 12f, Ui.DIM).apply { gravity = Gravity.CENTER; setPadding(0, dp(26), 0, 0) },
@@ -934,8 +951,8 @@ class MainActivity : Activity(), LillyBus.Ui {
             heard.text = if (text.isBlank() || text.startsWith("You said")) text else "You said " + text.trim()
         }
     }
-    override fun onOrb(state: OrbView.State) = runOnUiThread { orb.state = state }
-    override fun onLevel(level: Float) { orb.level = level }
+    override fun onOrb(state: OrbView.State) = runOnUiThread { orb.state = state; dockOrb?.state = state }
+    override fun onLevel(level: Float) { orb.level = level; dockOrb?.level = level }
     override fun onRunning(running: Boolean) = runOnUiThread {
         powerDot?.let { dot ->
             power.text = if (running) "Listening" else "Off — tap to start"
