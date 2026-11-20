@@ -441,7 +441,13 @@ class LillyService : Service() {
         val chosen = voiceList.firstOrNull { it.name == saved } ?: voiceList.firstOrNull()
         applyVoice(t, chosen)
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String?) {}
+            override fun onStart(id: String?) {
+                val c = cueText
+                if (c != null && id == currentUtterance) ChoicePopup.beginSpeech(c, c.length * 72L)
+            }
+            override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) {
+                if (cueText != null && id == currentUtterance) ChoicePopup.atChar(start)
+            }
             override fun onDone(id: String?) = finishSpeaking(id)
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) = finishSpeaking(id)
@@ -618,6 +624,11 @@ class LillyService : Service() {
         currentUtterance = id
         handler.removeCallbacks(speakTimeout)
         val src = voiceSource()
+        // Call list card khula ho: jo naam bol rahi hai woh row glass me chamke
+        val cue = if (ChoicePopup.wantsCues()) spoken else null
+        cueText = cue
+        realVoice.onStart = if (cue == null) null else ({ ms: Int -> if (currentUtterance == id) ChoicePopup.beginSpeech(cue, ms.toLong()) })
+        if (cue != null && src == "offline") ChoicePopup.beginSpeech(cue, cue.length * 72L)
         if (src == "offline") {
             // Phone ke andar wali insaani awaaz: hamesha wahi, bina internet
             handler.postDelayed(speakTimeout, 10_000L + (4000L + spoken.length * 130L).coerceAtMost(30_000L))
@@ -655,6 +666,8 @@ class LillyService : Service() {
     }
 
     /** Phone ki apni (Google TTS) awaaz */
+    @Volatile private var cueText: String? = null
+
     private fun speakDevice(spoken: String, id: String) {
         val t = tts
         handler.removeCallbacks(speakTimeout)
@@ -1184,7 +1197,7 @@ class LillyService : Service() {
         }
         // List padhte waqt beech me "teen" bolo toh turant (Siri jaisa)
         val choice = !reply.endChat && reply.action == null && brain.awaitingChoice() && prefs.getBoolean("barge_in", true)
-        val then2: () -> Unit = if (choice) ({ stopBarge(); then() }) else then
+        val then2: () -> Unit = if (choice) ({ stopBarge(); ChoicePopup.endSpeech(); then() }) else then
         // English me chhota bolne wala roop ho (lambi list screen par, bolna chhota)
         val en = reply.spokenEn
         if (english && en != null) say(reply.display, en, then2) else sayBi(reply.display, reply.spoken, then2)
@@ -1206,6 +1219,7 @@ class LillyService : Service() {
             try { OfflineVoice.stop() } catch (e: Exception) { }
             try { tts?.stop() } catch (e: Exception) { }
             LillyBus.heard("“$n”")
+            ChoicePopup.endSpeech()
             tapAnswer(n.toString())
         }.also { it.start() }
     }

@@ -1339,7 +1339,7 @@ class LillyBrain(private val ctx: Context) {
         return askChoice(pc)
     }
 
-    private val PAGE = 5
+    private val PAGE = 3
 
     private val ordinalHi = listOf("पहला", "दूसरा", "तीसरा", "चौथा", "पाँचवाँ")
     private val ordinalEn = listOf("first", "second", "third", "fourth", "fifth")
@@ -1381,6 +1381,8 @@ class LillyBrain(private val ctx: Context) {
         val left = o.size - (from + page.size)
         val who = CallChoice.speakName(if (pc.byName) pc.target else o.first().name)
         val headEn = if (pc.page == 0) (if (pc.byName) "${o.size} ${who}s. " else "$who has ${o.size} numbers. ") else ""
+        // Card ko batao kaun se naam bole jayenge — bolte waqt wahi row glass me chamkegi
+        ChoicePopup.setSpokenNames(names)
         val headHi = if (pc.page == 0) (if (pc.byName) "$who नाम के ${o.size} कॉन्टैक्ट हैं। " else "$who के ${o.size} नंबर हैं। ") else ""
         return r.copy(
             display = r.display.lines().first() + "\nSay a number, or tap one above.",
@@ -1402,7 +1404,7 @@ class LillyBrain(private val ctx: Context) {
                     endChat = false
                 )
             }
-            // Bahut saare: 5-5 karke. "more" / "aur" bolne par agle 5
+            // Bahut saare: 3-3 karke. "more" / "aur" bolne par agle 3
             val from = pc.page * PAGE
             val page = o.subList(from, minOf(from + PAGE, o.size))
             val short = CallChoice.shortNames(o)

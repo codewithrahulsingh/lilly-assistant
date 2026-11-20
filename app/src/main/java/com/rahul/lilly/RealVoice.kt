@@ -22,6 +22,9 @@ import org.json.JSONObject
  */
 class RealVoice(private val ctx: Context) {
 
+    /** Awaaz bajna shuru (lambai ms me) */
+    @Volatile var onStart: ((Int) -> Unit)? = null
+
     data class VoiceOption(val name: String, val about: String, val male: Boolean = false)
 
     companion object {
@@ -256,6 +259,8 @@ class RealVoice(private val ctx: Context) {
             p.prepare()
             player = p
             p.start()
+            // Kitni der bolegi — call list me naam ke saath row chamkane ke liye
+            try { onStart?.invoke(p.duration) } catch (e: Exception) { }
         } catch (e: Exception) {
             lastError = "The phone couldn't play the voice file (${e.javaClass.simpleName} ${e.message ?: ""})"
             file.delete()
